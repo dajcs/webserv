@@ -27,8 +27,8 @@
 - checking the value of `errno` to adjust the server behaviour is strictly forbidden after a read or write operation.
 - using `poll()` (or equivalent) for regular disk files is not required; `read()` and `write()` on them do not require readiness notifications.
 
-    **Note**: I/O can wait for data (sockets, pipes/FIFOs, etc.) must be non-blocking and driven by a single `poll()` (or equivalent). 
-    Calling read/recv or write/send on these descriptors without prior readiness will result in a grade of 0. Regular disk files are exempt from this requirement.
+  **Note**: I/O can wait for data (sockets, pipes/FIFOs, etc.) must be non-blocking and driven by a single `poll()` (or equivalent). 
+  Calling read/recv or write/send on these descriptors without prior readiness will result in a grade of 0. Regular disk files are exempt from this requirement.
 
 - When using `poll()` (or equivalent), every associated macro or helper function (e.g., `FD_SET` for `select()`) can be used.
 - A request to the server should never hang indefinitely.
@@ -41,15 +41,35 @@
 - Clients must be able to **upload files**
 - At least the GET, POST, and DELETE methods must be implemented.
 - Stress test the server to ensure it remains available at all times
-- The server must be able to listen on multiple ports to deliver different content (see *Configuratioin file* section).
+- The server must be able to listen on multiple ports to deliver different content (see *Configuration file* section).
 
-    **Note**: We deliberately chose to offer only a subset of the HTTP RFC. In this context, the virtual host feature is considered out of scope.
-    But if you want to implement it anyway, you are free to do so.
+  **Note**: We deliberately chose to offer only a subset of the HTTP RFC. In this context, the virtual host feature is considered out of scope.
+  But if you want to implement it anyway, you are free to do so.
+
 
 ## Configuration file
 
-    **hint**: You can take inspiration from the `server` section of the NGINX configuration file.
+  **hint**: You can take inspiration from the `server` section of the NGINX configuration file.
 
+The configuration file must allow at least the following settings:
+- Define all the interface:port pairs on which the server will listen to (defining multiple websites served by the program)
+- set up default error pages
+- set the maximum allowed size for client request bodies
+- specify rules or configurations on a URL/route (no regex required here), for a website, among the following:
+  - List of accepted HTTP methods for the route
+  - HTTP redirection
+  - Directory where the requested file should be located (e.g., if URL /kapouet is rooted to /tmp/www, URL /capouet/pouic/tot/pouet will search for /tmp/www/pouic/toto/pouet)
+  - Enable/disable directory listing
+  - Default file to serve when the requested resource is a directory.
+  - Uploading files from the clients to the server is authorized, and storage location is provided.
+  - Execution of CGI, based on file extension (for example .php).
+    Here are somespecific remarks regarding CGIs:
+    - Do you wonder what a CGI is? Read [this](https://en.wikipedia.org/wiki/Common_Gateway_Interface)
+    - Have a careful look at the environment variables involved in the web server-CGI communication. The full request and arguments provided by the client must be available to the CGI.
+    - Remember that for chunked requests, the server needs to un-chunk them, the CGI will expect EOF as the endo of the body.
+    - The same applies to the output of the CGI. If no `content_length` is returned from the CGI, EOF will mark the end of the returned data.
+    - The CGI should be run in the correct directory for relative path file access.
+    - The server should support at least one CGI (php-CGI, Python, and so on).
 
 
 
