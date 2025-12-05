@@ -22,8 +22,8 @@ The program is a **Web Server**. It runs in the background and listens for incom
 The server must be launched with a config file (e.g., `./webserv myconfig.conf`), 
 or it falls back to a default one.
 
-## The Core Concepts (The Vocabulary)
 
+## The Core Concepts
 
 ### 1. Sockets, Bind, Listen, Accept
 
@@ -129,5 +129,74 @@ CGI lets us execute external programs (PHP, Python) to generate dynamic content.
 
 **Important**: For chunked requests, we must un-chunk them before sending to CGI. CGI expects EOF to mark end of input.
 
+
+### 6. Configuration File
+
+Similar to NGINX config, our file might look like:
+
+```javascript
+
+server {
+    listen 8080;
+    server_name localhost;
+    
+    error_page 404 /errors/404.html;
+    client_max_body_size 10M;
+    
+    location / {
+        root /var/www;
+        index index.html;
+        allow_methods GET POST;
+    }
+    
+    location /upload {
+        allow_methods POST DELETE;
+        upload_dir /var/www/uploads;
+    }
+    
+    location /cgi-bin {
+        cgi_extension .php;
+        cgi_path /usr/bin/php-cgi;
+    }
+}
+```
+
+We need to parse this file and set up our server accordingly.
+
 ---
 
+
+## Recommended File Structure
+
+```bash
+
+webserv/
+    Makefile
+    config/
+        default.conf
+        example.conf
+    includes/
+        Server.hpp
+        Config.hpp
+        Connection.hpp
+        Request.hpp
+        Response.hpp
+        Router.hpp
+        CGI.hpp
+        Utils.hpp
+    src/
+        main.cpp
+        Server.cpp
+        Config.cpp
+        Connection.cpp
+        Request.cpp
+        Response.cpp
+        Router.cpp
+        CGI.cpp
+        Utils.cpp
+    www/
+        index.html
+        errors/
+        uploads/
+        cgi-bin/
+```
