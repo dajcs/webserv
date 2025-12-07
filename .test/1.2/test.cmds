@@ -1,0 +1,15 @@
+# Compile
+make
+
+# Test with default config
+./webserv
+
+# Test with specific config
+./webserv config/default.conf
+
+# Test with multi-server config
+./webserv config/multi_server.conf
+
+# Test error handling (create a file with syntax errors)
+echo "invalid {{{" > config/invalid.conf
+./webserv config/invalid.conf  # Should show error message
