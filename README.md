@@ -19,7 +19,7 @@ The program is a **Web Server**. It runs in the background and listens for incom
 3.  Find the file (or run a script).
 4.  Send the result back to the browser.
 
-The server must be launched with a config file (e.g., `./webserv myconfig.conf`), 
+The server must be launched with a config file (e.g., `./webserv myconfig.conf`),
 or it falls back to a default one.
 
 
@@ -64,7 +64,7 @@ struct pollfd fds[MAX_CLIENTS];
 
 while (true) {
     poll(fds, num_fds, timeout); // ONE call monitors everything
-    
+
     // Check which sockets are ready
     for (each fd in fds) {
         if (ready for reading) → read data
@@ -139,21 +139,21 @@ Similar to NGINX config, our file might look like:
 server {
     listen 8080;
     server_name localhost;
-    
+
     error_page 404 /errors/404.html;
     client_max_body_size 10M;
-    
+
     location / {
         root /var/www;
         index index.html;
         allow_methods GET POST;
     }
-    
+
     location /upload {
         allow_methods POST DELETE;
         upload_dir /var/www/uploads;
     }
-    
+
     location /cgi-bin {
         cgi_extension .php;
         cgi_path /usr/bin/php-cgi;
@@ -200,3 +200,9 @@ webserv/
         uploads/
         cgi-bin/
 ```
+
+---
+
+## [Implementation Workflow](.test/webserv_workflow.md)
+
+[Implementation documentation.](.test/webserv_workflow.md)
