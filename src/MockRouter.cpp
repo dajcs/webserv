@@ -40,7 +40,7 @@ public:
     void setStaticResponse(const std::string& body, const std::string& contentType = "text/html");
     void setErrorCode(int code);
     void setLargeResponseSize(size_t bytes);
-    
+
     // Statistics for testing
     size_t getRequestCount() const;
     void resetStats();
@@ -138,7 +138,7 @@ Response MockRouter::handleEcho(const Request& request, int serverPort)
          << "</body></html>";
 
     Response response = Response::ok(html.str(), "text/html");
-    
+
     // Respect Connection header from request
     std::string connection = request.getHeader("Connection");
     if (connection == "close" || request.getHttpVersion() == "HTTP/1.0") {
@@ -160,7 +160,7 @@ Response MockRouter::handleLarge()
     // Generate a large response to test non-blocking write handling
     std::string body;
     body.reserve(_largeSize);
-    
+
     const char* pattern = "0123456789ABCDEF";
     for (size_t i = 0; i < _largeSize; ++i) {
         body += pattern[i % 16];

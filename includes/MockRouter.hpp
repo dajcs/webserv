@@ -21,7 +21,7 @@ public:
     void setStaticResponse(const std::string& body, const std::string& contentType = "text/html");
     void setErrorCode(int code);
     void setLargeResponseSize(size_t bytes);
-    
+
     size_t getRequestCount() const;
     void resetStats();
 
