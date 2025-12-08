@@ -6,47 +6,61 @@
 #    By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2025/10/21 19:46:34 by anemet            #+#    #+#              #
-#    Updated: 2025/12/07 16:03:22 by anemet           ###   ########.fr        #
+#    Updated: 2025/12/08 23:35:51 by anemet           ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
+
+
+# Directories
+SRCDIR = src
+OBJDIR = obj
+INCDIR = inc
 
 # Compiler
 CXX = c++
 
 # Compiler flags
-CXXFLAGS = -Wall -Wextra -Werror -std=c++98 -g -fPIE
+CXXFLAGS = -Wall -Wextra -Werror -std=c++98 -g -fPIE -I $(INCDIR)
 
 # The name of the executable
 NAME = webserv
 
 # Source files
-SRCS = main.cpp
-        CGI.cpp \n
-        Config.cpp \n
-        Connection.cpp \n
-        Request.cpp \n
-        Response.cpp \n
-        Router.cpp \n
-        Server.cpp \n
-        Utils.cpp \n
+SRCS = main.cpp \
+        CGI.cpp \
+        Config.cpp \
+        Connection.cpp \
+        Request.cpp \
+        Response.cpp \
+        Router.cpp \
+        Server.cpp \
+        Utils.cpp
 
-# Object files
-OBJS = $(SRCS:.cpp=.o)
+# Add source directory prefix
+SRC_FILES = $(addprefix $(SRCDIR)/, $(SRCS))
+
+# Object files in obj directory
+OBJS = $(addprefix $(OBJDIR)/, $(SRCS:.cpp=.o))
+
 
 # Default target
-all: $(NAME)
+all: $(OBJDIR) $(NAME)
+
+# Create object directory if it doesn't exist
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
 
 # Rule to link the object files and create the executable
 $(NAME): $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $(NAME) $(OBJS)
 
 # Rule to compile a .cpp file into a .o file
-%.o: %.cpp
+$(OBJDIR)/%.o: $(SRCDIR)/%.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # Clean target to remove object files
 clean:
-	rm -f $(OBJS)
+	rm -rf $(OBJDIR)
 
 # Fclean target to remove object files and the executable
 fclean: clean

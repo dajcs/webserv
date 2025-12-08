@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:03 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/08 22:45:57 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/08 23:44:58 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -162,7 +162,7 @@ std::string Config::trim(const std::string& str) const
 	size_t start = str.find_first_not_of(" \t\r\n\v");
 	if (start == std::string::npos)
 	{
-		return;
+		return "";
 	}
 	size_t end = str.find_last_not_of(" \t\r\n\v");
 	return str.substr(start, end - start + 1);
@@ -189,6 +189,7 @@ std::vector<std::string> Config::split(const std::string& str, char delimiter) c
 			tokens.push_back(trim(token));
 		}
 	}
+	return tokens;
 }
 
 /*
