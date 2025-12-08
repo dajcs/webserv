@@ -1,10 +1,4 @@
-Below is the description of the `webserv` project at school 42.
-Unfortunately I don't understand everything what should be done in this project, and what are the restrictions.
-
-Can you give me a more detailed description and explanations what is the exercise?
-I've done `minishell` project which might be somewhat related to this one, but I'm not proficient in the webserv specifics like: socket, bind, select/poll/epoll, GET, POST, DELETE, NGINX, CGI, ...
-What is the difference between HTTP/1.1 and HTTP/1.0? Which wan is requested by this project?
-
+Can you help me coding `### Step 2.1: Socket Creation & Binding` section of the `webserv` project at school 42, described below?
 
 
 # Webserv
@@ -14,11 +8,11 @@ What is the difference between HTTP/1.1 and HTTP/1.0? Which wan is requested by 
 - Makefile: NAME, all, clean, fclean, re
 - Arguments: ./webserv <config_file>
 - Allowed C functions: `execve`, `pipe`, `strerror`, `gai_strerror`, `errno`, `dup`,
-  `dup2`, `fork`, `socketpair`, `htons`, `htonl`, `ntohs`, `ntohl`,`select`, `poll`, 
-  `epoll` (`epoll_create`, `epoll_ctl`, `epoll_wait`), `kqueue` (`kqueue`, `kevent`), 
-  `socket`, `accept`, `listen`, `send`, `recv`, `chdir`, `bind`, `connect`, 
-  `getaddrinfo`, `freeaddrinfo`, `setsockopt`, `getsockname`, `getprotobyname`, 
-  `fcntl`, `close`, `read`, `write`, `waitpid`, `kill`, `signal`, `access`, `stat`, `open`, 
+  `dup2`, `fork`, `socketpair`, `htons`, `htonl`, `ntohs`, `ntohl`,`select`, `poll`,
+  `epoll` (`epoll_create`, `epoll_ctl`, `epoll_wait`),
+  `socket`, `accept`, `listen`, `send`, `recv`, `chdir`, `bind`, `connect`,
+  `getaddrinfo`, `freeaddrinfo`, `setsockopt`, `getsockname`, `getprotobyname`,
+  `fcntl`, `close`, `read`, `write`, `waitpid`, `kill`, `signal`, `access`, `stat`, `open`,
   `opendir`, `readdir`, `closedir`
 - C++ Standard: C++98
 - Description: An HTTP server in C++98
@@ -36,7 +30,7 @@ What is the difference between HTTP/1.1 and HTTP/1.0? Which wan is requested by 
 - checking the value of `errno` to adjust the server behaviour is strictly forbidden after a read or write operation.
 - using `poll()` (or equivalent) for regular disk files is not required; `read()` and `write()` on them do not require readiness notifications.
 
-  **Note**: I/O can wait for data (sockets, pipes/FIFOs, etc.) must be non-blocking and driven by a single `poll()` (or equivalent). 
+  **Note**: I/O can wait for data (sockets, pipes/FIFOs, etc.) must be non-blocking and driven by a single `poll()` (or equivalent).
   Calling read/recv or write/send on these descriptors without prior readiness will result in a grade of 0. Regular disk files are exempt from this requirement.
 
 - When using `poll()` (or equivalent), every associated macro or helper function (e.g., `FD_SET` for `select()`) can be used.
@@ -84,12 +78,13 @@ You must provide configuration files and default files to test and demonstrate t
 
 You can have other rules or configuration information in your file (e.g. a server name for a website if you plan to implement virtual hosts).
 
-  **info**: If you have a question about a specific behaviour, you can compare your program's vehaviour wih NGINX's.  
+  **info**: If you have a question about a specific behaviour, you can compare your program's vehaviour wih NGINX's.
   We have provide a small tester. Using it is not mandatory if everything works fine with browser andd tests, but it can help you find and fix bugs.
 
   **attention**: Resilience is key. Your server must remain operational at all times.
 
   **attention**: Do not test with only one program. Write your tests in a more suitable language, such as Python, among others, even in C or C++ if you prefer.
+
 
 
 ## Bonus part
@@ -98,4 +93,149 @@ Additional features that can be implemented:
 
 - Support cookies and session management (provide simple examples)
 - Handle multiple CGI types
+
+
+
+
+# Webserv Implementation Workflow
+
+## Phase 1: Project Setup & Basic Infrastructure
+
+### Step 1.1: Project Structure Setup
+**Goal**: Create the basic project structure
+
+**Tasks**:
+- Create directory structure as shown below:
+
+```bash
+
+webserv/
+    Makefile
+    config/
+        default.conf
+        example.conf
+    includes/
+        Server.hpp
+        Config.hpp
+        Connection.hpp
+        Request.hpp
+        Response.hpp
+        Router.hpp
+        CGI.hpp
+        Utils.hpp
+    src/
+        main.cpp
+        Server.cpp
+        Config.cpp
+        Connection.cpp
+        Request.cpp
+        Response.cpp
+        Router.cpp
+        CGI.cpp
+        Utils.cpp
+    www/
+        index.html
+        errors/
+        uploads/
+        cgi-bin/
+```
+
+- Write a basic Makefile with rules: NAME, all, clean, fclean, re
+- Set up C++98 compilation flags: `-Wall -Wextra -Werror -std=c++98`
+- Create empty header and source files
+
+**Testing**:
+```bash
+make all
+make clean
+make fclean
+make re
+```
+
+### Step 1.2: Configuration File Parser
+**Goal**: Parse and validate the configuration file
+
+**Tasks**:
+- Create `Config.hpp` and `Config.cpp`
+- Implement configuration file parser (similar to NGINX format)
+- Support basic directives:
+  - Server blocks with `listen` (host:port)
+  - `error_page` directives
+  - `client_max_body_size`
+  - Location blocks with routes
+- Store parsed data in appropriate data structures
+- Handle parsing errors gracefully
+
+**Testing**:
+```bash
+# Create test config files with various formats
+./webserv config/test_valid.conf    # Should parse successfully
+./webserv config/test_invalid.conf  # Should show error and exit
+./webserv                           # Should use default config
+```
+
+**Test Config Example**:
+```nginx
+server {
+    listen 8080;
+    server_name localhost;
+    error_page 404 /errors/404.html;
+    client_max_body_size 10M;
+
+    location / {
+        root www;
+        index index.html;
+    }
+}
+```
+
+
+---
+
+## Phase 2: Socket Setup & Basic Server
+
+### Step 2.1: Socket Creation & Binding
+**Goal**: Create listening sockets for all configured ports
+
+**Tasks**:
+- Create `Server.hpp` and `Server.cpp`
+- Implement socket creation with `socket()`
+- Set socket options with `setsockopt()` (SO_REUSEADDR, SO_REUSEPORT)
+- Bind sockets to configured host:port pairs with `bind()`
+- Set sockets to non-blocking mode with `fcntl()`
+- Start listening with `listen()`
+- Support multiple listening ports
+
+**Testing**:
+```bash
+# Terminal 1
+./webserv config/multi_port.conf
+
+# Terminal 2
+netstat -tuln | grep 8080  # Check if socket is listening
+telnet localhost 8080      # Try to connect
+```
+
+### Step 2.2: Poll/Select Implementation
+**Goal**: Set up the main event loop with poll/epoll
+
+**Tasks**:
+- Choose between `poll()`, `epoll`, or `select()` (recommend epoll for Linux)
+- Create the main server loop
+- Add listening sockets to the poll mechanism
+- Implement basic event loop structure:
+  - Monitor for POLLIN events on listening sockets
+  - Accept new connections
+  - Add client sockets to poll
+  - Handle poll errors and timeouts
+
+**Testing**:
+```bash
+# Terminal 1
+./webserv
+
+# Terminal 2
+nc localhost 8080  # Multiple times to test multiple connections
+# Server should accept connections without blocking
+```
 

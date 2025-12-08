@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:03 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/07 22:03:50 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/08 13:43:27 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -80,6 +80,8 @@ const LocationConfig* ServerConfig::findLocation(const std::string &uri) const
 
 		// Check if this location's path is a prefix of the requested URI
 		// Example: locPath = "/api" matches uri = "/api/users" but not "/apix"
+		// uri.compare(uri start pos, nr char to compare, the string to be matched)
+		// in C++20: uri.starts_with(locPath)
 		if (uri.compare(0, locPath.length(), locPath) == 0)
 		{
 			// For non-root locations, ensure we match at a path boundary
@@ -109,9 +111,9 @@ const LocationConfig* ServerConfig::findLocation(const std::string &uri) const
 /*
 	Default constructor - look for config in standard location
 	If no config file is specified, servers typically look in:
-		1. current directory (./webserv.con)
+		1. current directory (./webserv.conf)
 		2. /etc/webserv/webserv.conf (system-wide)
-	We will use current directory for sinplicity
+	We will use ./config directory for simplicity
 */
 Config::Config() : _configPath("config/default.conf")
 {
@@ -140,3 +142,117 @@ Config::~Config() {}
 	Example:
 			"	listen 8080;    " -> "listen 8080;"
 */
+std::string Config::trim(const std::string& str) const
+{
+	size_t start = str.find_first_not_of(" \t\r\n\v");
+	if (start == std::string::npos)
+	{
+		return;
+	}
+	size_t end = str.find_last_not_of(" \t\r\n\v");
+	return str.substr(start, end - start + 1);
+}
+
+/*
+	split: Split a string by a delimiter character
+	Used to parse directives like "listen 0.0.0.0:8080"
+	where we need to split "0.0.0.0:8080" by ';'
+*/
+std::vector<std::string> Config::split(const std::string& str, char delimiter) const
+{
+	std::vector<std::string> tokens;
+	std::stringstream ss(str);
+	std::string token;
+
+	// getline: read from `ss` into `token` until `delimiter`
+	// e.g.: str = "apple:banana:cherry", delimiter = ':'
+	// -> loop1: apple, loop2: banana, loop3: cherry
+	while (std::getline(ss, token, delimiter))
+	{
+		if (!token.empty())
+		{
+			tokens.push_back(trim(token));
+		}
+	}
+}
+
+/*
+	removeComments: Strip comments from a line
+	NGINX-style configs use # for comments:
+		listen 8080; # This is a comment
+	We need to remove everything after '#' (including '#')
+*/
+std::string Config::removeComments(const std::string& line) const
+{
+	size_t commentPos = line.find('#');
+	if (commentPos != std::string::npos)
+	{
+		return line.substr(0, commentPos);
+	}
+	return line;
+}
+
+/*
+	parseSize: Convert human readable size to bytes
+	Config files often specify sizes like "10M" instead of "10485760"
+	Supported suffixes:
+		K or k = kilobytes (1024 bytes)
+		M or m = megabytes (1024 * 1024 bytes)
+		G or g = gigabytes (1024 * 1024 * 1024 bytes)
+		no suffix = bytes
+*/
+size_t Config::parseSize(const std::string& sizeStr) const
+{
+	if (sizeStr.empty())
+	{
+		return 0;
+	}
+
+	std::string numPart = sizeStr;
+	size_t multiplier = 1;
+
+	// Check for size suffix (K, M, G)
+	char lastChar = sizeStr[sizeStr.length() - 1];
+	if (lastChar == 'K' || lastChar == 'k')
+	{
+		multiplier = 1024;
+		numPart = sizeStr.substr(0, sizeStr.length() - 1);
+	} else if (lastChar == 'M' || lastChar == 'm')
+	{
+		multiplier = 1024 * 1024;
+		numPart = sizeStr.substr(0, sizeStr.length() - 1);
+	} else if (lastChar == 'G' || lastChar == 'g')
+	{
+		multiplier = 1024 * 1024 * 1024;
+		numPart = sizeStr.substr(0, sizeStr.length() - 1);
+	}
+
+	// Convert to number - atol is C++98 compatible ( no std::stoul)
+	// `atol` is a C function from #include <cstdlib>
+	// it works on classic '\0' terminated C string, => `.c_str()`
+	long size = std::atol(numPart.c_str());
+	if (size < 0)
+	{
+		throw ConfigException("Invalid size value: " + sizeStr);
+	}
+
+	return static_cast<size_t>(size) * multiplier;
+}
+
+
+/*
+	parseFile: Main parsing entry point
+	Opens the config file and parses its contents.
+	The expected structure:
+
+	server {
+		... server directives ...
+		location /path {
+			... location directives ...
+		}
+	}
+*/
+void Config::parseFile(const std::string& path)
+{
+	
+}
