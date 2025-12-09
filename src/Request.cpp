@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:28 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/09 11:50:49 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/09 14:16:55 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -169,9 +169,12 @@ bool Request::parse(const std::string& data)
 		_state = PARSE_HEADERS;
 	}
 
-
+	// TODO: Remove this when implementing Step 4.2
+	if (_buffer.empty())
+		_state = PARSE_COMPLETE;
 	// TODO: Implement header parsing in Step 4.2
 	// TODO: Implement body parsing in Step 4.3
+
 
 	return (_state == PARSE_COMPLETE || _state == PARSE_ERROR);
 }
