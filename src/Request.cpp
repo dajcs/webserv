@@ -6,7 +6,12 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:28 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/07 15:55:29 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/09 09:05:02 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
+
+#include "Request.hpp"
+#include <algorithm>
+#include <cstdlib>
+
 
