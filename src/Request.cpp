@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:28 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/09 20:39:01 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/09 22:20:40 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -132,6 +132,10 @@ bool Request::parse(const std::string& data)
 	// Add incoming data to the buffer
 	_buffer += data;
 
+	// ==============================
+	// 	PARSE_REQUEST_LINE State
+	// ==============================
+
 	// State machine: process based on current parsing stage
 	// This allows handling requests that arrive in multiple recv() calls
 	if (_state == PARSE_REQUEST_LINE)
@@ -196,7 +200,7 @@ bool Request::parse(const std::string& data)
 	*/
 	if (_state == PARSE_HEADERS)
 	{
-		// Process headers line by lin until we find the empty line
+		// Process headers line by line until we find the empty line
 		while (true)
 		{
 			// Look for next line ending
@@ -295,19 +299,142 @@ bool Request::parse(const std::string& data)
 				_state = PARSE_ERROR;
 				return true; // Error in header format
 			}
+		} // end of while(true)
+	} // end of PARSE_HEADERS
+
+
+	// ====================================
+	// 	PARSE_BODY State (Content-Length)
+	// ====================================
+
+	/*
+		Content-Length Body Handling
+
+		HTTP/1.1 uses Content-Length header to specify exact body size
+		Example POST request:
+			POST /upload HTTP/1.1\r\n
+			Host: localhost\r\n
+			Content-Type: application/json\r\n
+			Content-Length: 27\r\n
+			\r\n
+			{"name":"test","value":42}
+
+		How it works:
+			- Server knows exactly how many bytes to expect (_contentLength)
+			- Read data from buffer until we have all bytes
+			- Body might arrive in multiple recv() calls over network
+			- Must handle partial body data gracefully
+
+		Why this matters:
+			- POST requests upload files, form data, JSON payloads
+			- Server needs complete body before processing (no partial data)
+			- CGI scripts expect full body in stdin
+			- We can't just read indefinitely - network is unreliable
+
+		Real-world scenario:
+			Client uploads 5 MB file:
+			- recv() call 1: gets 64 KB chunk
+			- recv() call 2: gets 128 KB chunk
+			- recv() call 3: gets 256 KB chunk
+			- ... continues until all 5 MB received
+	*/
+	if (_state == PARSE_BODY)
+	{
+		// Calculate how many bytes we still need
+		size_t bytesNeeded = _contentLength - _bodyBytesRead;
+
+		// How many bytes are available in buffer?
+		size_t bytesAvailable = _buffer.size();
+
+		// Take the smaller of: what we need vs what we have
+		size_t bytesToRead = (bytesAvailable < bytesNeeded) ?
+								bytesAvailable : bytesNeeded;
+
+		// Append data from buffer to body
+		_body.append(_buffer, 0, bytesToRead);
+
+		// Remove consumed data from buffer
+		_buffer.erase(0, bytesToRead);
+
+		// Update counter
+		_bodyBytesRead += bytesToRead;
+
+		// Check if we have the complete body
+		if (_bodyBytesRead >= _contentLength)
+		{
+			// Body complete! Request is ready to process
+			_state = PARSE_COMPLETE;
+			return true;
 		}
+
+		// Still waiting for more body data
+		return false;
 	}
 
 
+	// =========================================
+	// 	PARSE_CHUNKED_BODY state
+	// =========================================
+	/*
+		Chunked Transfer Encoding (RFC 7230 Section 4.1)
 
+		Used when server/client doesn't know total size upfront
+		Example: dynamically generated content, live streaming
 
+		Format:
+			<chunk-size in hex>\r\n
+			<chunk-data>\r\n
+			<chunk-size in hex>\r\n
+			<chunk-data>\r\n
+			...
+			0\r\n
+			\r\n
 
+		Real example:
+			POST /upload HTTP/1.1\r\n
+			Host: localhost\r\n
+			Transfer-Encoding: chunked\r\n
+			\r\n
+			5\r\n
+			Hello\r\n
+			7\r\n
+			 World!\r\n
+			0\r\n
+			\r\n
 
+		Breakdown:
+			"5\r\n" = next chunk is 5 bytes
+			"Hello\r\n" = the 5 byte chunk + CRLF
+			"7\r\n" = next chunk is 7 bytes
+			" World!\r\n" = the 7 byte chunk + CRLF
+			"0\r\n" = chunk size 0 = end of body
+			"\r\n" = final CRLF
 
+		Why chunked encoding exists:
+			- Server generates response on-the-fly (can't pre-calculate size)
+			- Client uploads large file without knowing exact size
+			- Allows streaming data without buffering entire payload
+			- HTTP/1.1 keep-alive requires knowing when body ends
 
-	// TODO: Implement body parsing in Step 4.3
-	// if (_state == PARSE_BODY) { ... }
-	// if (_state == PARSE_CHUNKED_BODY) { ... }
+		Important for webserv:
+			- Must un-chunk before sending to CGI (CGI expects raw data)
+			- Enforce size limits even for chuked data (prevent DoS)
+			- Handle malformed chunks (return 400 Bad Request)
+	*/
+	if (_state == PARSE_CHUNKED_BODY)
+	{
+		if (!parseChunkedBody())
+		{
+			// Need more data, or parsing error occured
+			// Error code set by parseChunkedBody() in case of error
+			return (_state == PARSE_ERROR);
+		}
+
+		// Chunked body complete
+		_state = PARSE_COMPLETE;
+		return true;
+	}
+
 
 	return (_state == PARSE_COMPLETE || _state == PARSE_ERROR);
 }
@@ -529,7 +656,24 @@ bool Request::parseHeader(const std::string& line)
 	return true;
 }
 
-// TODO: Implement in Step 4.3
+
+/*
+	parseChunkedBody() - Parse HTTP chunked transfer encoding
+
+	Chunk format:
+		<size-hex>\r\n<data>\r\n<size-hex>\r\n<data>\r\n ... 0\r\n\r\n
+
+	State machine approach:
+		1. Read chunk size line (hex number)
+		2. Read chunk data (exactly size bytes)
+		3. Read trailing CRLF after data
+		4. Repeat until size = 0
+		5. Read final CRLF
+
+	Returns:
+		true if chunked body is complete
+		false if need more data or error occured
+*/
 bool Request::parseChunkedBody()
 {
 	return false;
