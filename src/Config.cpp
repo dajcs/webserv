@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:03 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/08 23:44:58 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/09 11:48:37 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -487,7 +487,7 @@ void Config::parseLocationBlock(std::ifstream& file, std::string& line, ServerCo
 	// Remove opening brace if attached to path
 	if (!location.path.empty() && location.path[location.path.length() - 1] == '{')
 	{
-		location.path == location.path.substr(0, location.path.length() - 1);
+		location.path = location.path.substr(0, location.path.length() - 1);
 	}
 	location.path = trim(location.path);
 
