@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:28 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/09 14:16:55 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/09 20:39:01 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -167,14 +167,147 @@ bool Request::parse(const std::string& data)
 
 		// Move to next state: parsing headers
 		_state = PARSE_HEADERS;
+
+	} // end of PARSE_REQUEST_LINE
+
+
+	// ==============================
+	// 	PARSE_HEADERS State
+	// ==============================
+	/*
+		HTTP Headers format (RFC 7230)
+		Header-Name: Header-Value\r\n
+		Another-Header: Another-Value\r\n
+		\r\n  <- Empty line marks end of headers
+
+		Example:
+			GET / HTTP/1.1\r\n
+			Host: localhost:8080\r\n
+			User-Agent: Mozilla/5.0\r\n
+			Accept: text/html\r\n
+			\r\n  <- Headers complete, body starts here (if any)
+
+		Important headers we need to handle:
+			- Host: Required in HTTP/1.1, identifies the server
+			- Content-Length: Size of request body in bytes
+			- Content-Type: Format of request body (e.g., application/json)
+			- Transfer Encoding: chunked (alternative to Content-Length)
+			- Connection: keep-alive or close
+	*/
+	if (_state == PARSE_HEADERS)
+	{
+		// Process headers line by lin until we find the empty line
+		while (true)
+		{
+			// Look for next line ending
+			size_t pos = _buffer.find("\r\n");
+			if (pos == std::string::npos)
+			{
+				// No complete line yet, need more data
+				// But prevent header section from being too large
+				if (_buffer.size() > 8192) // 8 kB size limit for all headers
+				{
+					_state = PARSE_ERROR;
+					_errorCode = 431; // Request Header Fields Too Large
+					return true;
+				}
+				return false; // Wait for more data
+			}
+
+			// Extract the line (without \r\n)
+			std::string line = _buffer.substr(0, pos);
+
+			// Remove processed line from buffer (including \r\n)
+			_buffer.erase(0, pos + 2);
+
+			// Empty line marks end of headers
+			if (line.empty())
+			{
+				// Headers are complete!
+				// Now we need to determine what comes next:
+
+				// Check if HTTP/1.1 requires Host header
+				if (_httpVersion == "HTTP/1.1")
+				{
+					// RFC 7230: HTTP/1.1 requests MUST include Host header
+					if (getHeader("Host").empty())
+					{
+						_state = PARSE_ERROR;
+						_errorCode = 400; // Bad Request
+						return true;
+					}
+				}
+
+				// Determine if request has a body
+				// Body is present if:
+				// 	1. Content-Length header exists OR
+				// 	2. Transfer-Encoding: chunked is present
+
+				std::string contentLength = getHeader("Content-Length");
+				std::string transferEncoding = getHeader("Transfer-Encoding");
+
+				if (!contentLength.empty())
+				{
+					// Content-Length body
+					_contentLength = std::atol(contentLength.c_str());
+
+					// TODO: Check against client_max_body_size from config
+					// For now, use a default limit of 10MB
+					if(_contentLength > 10485760) // 10 MB
+					{
+						_state = PARSE_ERROR;
+						_errorCode = 413; // Payload Too Large
+						return true;
+					}
+
+					if (_contentLength > 0)
+					{
+						// Request has a body, move to body parsing
+						_state = PARSE_BODY;
+					}
+					else
+					{
+						// No body (Content-Length: 0)
+						_state = PARSE_COMPLETE;
+					}
+				}
+				else if (!transferEncoding.empty() &&
+							transferEncoding.find("chunked") != std::string::npos)
+				{
+					// Chunked transfer encoding
+					// TODO: Implement in Step 4.3
+					_state = PARSE_CHUNKED_BODY;
+				}
+				else
+				{
+					// No body indicators, request is complete
+					// This is normal for GET, DELETE, etc.
+					_state = PARSE_COMPLETE;
+				}
+
+				break; // Exit header parsing loop
+
+			}	// end of empty.line - marking end-of-header
+
+			// Parse this header line
+			if (!parseHeader(line))
+			{
+				_state = PARSE_ERROR;
+				return true; // Error in header format
+			}
+		}
 	}
 
-	// TODO: Remove this when implementing Step 4.2
-	if (_buffer.empty())
-		_state = PARSE_COMPLETE;
-	// TODO: Implement header parsing in Step 4.2
-	// TODO: Implement body parsing in Step 4.3
 
+
+
+
+
+
+
+	// TODO: Implement body parsing in Step 4.3
+	// if (_state == PARSE_BODY) { ... }
+	// if (_state == PARSE_CHUNKED_BODY) { ... }
 
 	return (_state == PARSE_COMPLETE || _state == PARSE_ERROR);
 }
@@ -304,11 +437,96 @@ bool Request::parseRequestLine(const std::string& line)
 	return true;
 }
 
-// TODO: Implement in Step 4.2
+/*
+	parseHeader() - Parse a single HTTP header line
+
+	HTTP Header Format (RFC 7230):
+		Header-Name: Header-Value
+		- Header name and value separated by colon ':'
+		- Optional whitespace after colon (leading white-space in value)
+		- Header names are case-insensitive
+		- Multiple headers with same name can exist (we'll keep last value)
+
+	Examples:
+		"Host: localhost:8080"
+		"Content-Type: application/json"
+		"User-Agent: Mozilla/5.0 (X11; Linux x86_64)"
+
+	Special cases to handle:
+		- Multi-line headers (obsolete in HTTP/1.1, but we should handle)
+		- Empty header values
+		- Headers with multiple colons in the value
+
+	Input:
+		line: A single header line (without \r\n)
+	Return:
+		true if valid header, false if malformed
+*/
 bool Request::parseHeader(const std::string& line)
 {
-	(void) line;
-	return false;
+	// Find the colon separator between name and value
+	size_t colonPos = line.find(':');
+
+	if (colonPos == std::string::npos)
+	{
+		// No colon found -> malformed header
+		// Example bad header: "HostLocalhost" (missing colon)
+		_errorCode = 400; // Bad Request
+		return false;
+	}
+
+	// Extract header name (everything before colon)
+	std::string name = line.substr(0, colonPos);
+
+	// Validate header name
+	// RFC 7230: Header names must not be empty and should not have whitespace
+	if (name.empty())
+	{
+		_errorCode = 400; // Bad Request
+		return false;
+	}
+
+	// Check for whitespace in header name (not allowed)
+	if (name.find(' ') != std::string::npos ||
+		name.find('\t') != std::string::npos)
+	{
+		_errorCode = 400; // Bad Request
+		return false;
+	}
+
+	// Extract header value (everything after colon)
+	std::string value = line.substr(colonPos + 1);
+
+	// Trim optional leading whitespace from value
+	size_t valueStart = 0;
+	while (valueStart < value.length() &&
+			(value[valueStart] == ' ' || value[valueStart] == '\t'))
+	{
+		valueStart++;
+	}
+	value = value.substr(valueStart);
+
+	// Trim trailing whitespace from value
+	size_t valueEnd = value.length();
+	while (valueEnd > 0 &&
+			(value[valueEnd - 1] == ' ' || value[valueEnd - 1] == '\t'))
+	{
+		valueEnd--;
+	}
+	value = value.substr(0, valueEnd);
+
+	// Convert header name to lowercase for case-insensitive storage
+	// HTTP headers are case-insensitive (RFC 7230)
+	std::string lowerName = name;
+	std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+
+	// Store the header
+	// Note: if header already exists, this will overwrite it
+	// Some headers can appear multiple times (e.g., Cookie, Set-Cookie)
+	// For simplicity we keep the last value (optional: handle multi-value headers)
+	_headers[lowerName] = value;
+
+	return true;
 }
 
 // TODO: Implement in Step 4.3

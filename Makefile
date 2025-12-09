@@ -6,7 +6,7 @@
 #    By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2025/10/21 19:46:34 by anemet            #+#    #+#              #
-#    Updated: 2025/12/08 23:35:51 by anemet           ###   ########.fr        #
+#    Updated: 2025/12/09 15:45:04 by anemet           ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -36,8 +36,6 @@ SRCS = main.cpp \
         Server.cpp \
         Utils.cpp
 
-# Add source directory prefix
-SRC_FILES = $(addprefix $(SRCDIR)/, $(SRCS))
 
 # Object files in obj directory
 OBJS = $(addprefix $(OBJDIR)/, $(SRCS:.cpp=.o))
