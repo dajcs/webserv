@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:03 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/09 11:48:37 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/10 20:55:33 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -576,7 +576,7 @@ void Config::parseLocationBlock(std::ifstream& file, std::string& line, ServerCo
 			*/
 			location.autoindex = (tokens[1] == "on");
 		}
-		else if (directive == "puload_path" || directive == "upload_store")
+		else if (directive == "upload_path" || directive == "upload_store")
 		{
 			/*
 				upload_path directive: where to save uploaded files
@@ -585,7 +585,7 @@ void Config::parseLocationBlock(std::ifstream& file, std::string& line, ServerCo
 			*/
 			if (tokens.size() < 2)
 			{
-				throw ConfigException("uplaod_path directive requires a path");
+				throw ConfigException("upload_path directive requires a path");
 			}
 			location.upload_path = tokens[1];
 		}
