@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:28 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/09 22:20:40 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/10 16:04:36 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -172,6 +172,7 @@ bool Request::parse(const std::string& data)
 		// Move to next state: parsing headers
 		_state = PARSE_HEADERS;
 
+
 	} // end of PARSE_REQUEST_LINE
 
 
@@ -279,7 +280,6 @@ bool Request::parse(const std::string& data)
 							transferEncoding.find("chunked") != std::string::npos)
 				{
 					// Chunked transfer encoding
-					// TODO: Implement in Step 4.3
 					_state = PARSE_CHUNKED_BODY;
 				}
 				else
@@ -287,6 +287,7 @@ bool Request::parse(const std::string& data)
 					// No body indicators, request is complete
 					// This is normal for GET, DELETE, etc.
 					_state = PARSE_COMPLETE;
+					return true;
 				}
 
 				break; // Exit header parsing loop
@@ -299,8 +300,10 @@ bool Request::parse(const std::string& data)
 				_state = PARSE_ERROR;
 				return true; // Error in header format
 			}
-		} // end of while(true)
-	} // end of PARSE_HEADERS
+		} // end of while(true) for headers
+
+
+	} // end of _state: PARSE_HEADERS
 
 
 	// ====================================
@@ -398,7 +401,7 @@ bool Request::parse(const std::string& data)
 			5\r\n
 			Hello\r\n
 			7\r\n
-			 World!\r\n
+			World!\r\n
 			0\r\n
 			\r\n
 
@@ -435,8 +438,9 @@ bool Request::parse(const std::string& data)
 		return true;
 	}
 
-
+	// if we reach here, we're in PARSE_COMPLETE or PARSE_ERROR state
 	return (_state == PARSE_COMPLETE || _state == PARSE_ERROR);
+
 }
 
 
@@ -676,7 +680,181 @@ bool Request::parseHeader(const std::string& line)
 */
 bool Request::parseChunkedBody()
 {
-	return false;
+	/*
+		Chunked encoding state machine:
+		We need to track which part of the chunk we're parsing
+
+		States:
+		- Reading chunk size line
+		- Reading chunk data
+		- Reading trailing CRLF after chunk data
+		- Reading final CRLF after last chunk of size 0
+	*/
+
+	while (true)
+	{
+		// =================================
+		//  Step 1: Parse Chunk Size Line
+		// =================================
+		// Format: "<hex-size>\r\n"
+		// Example: "1A\r\n" means next chunk is 26 bytes (0x1A = 26)
+
+		// Look for the CRLF that ends the chunk size line
+		size_t crlfPos = _buffer.find("\r\n");
+
+		if (crlfPos == std::string::npos)
+		{
+			// Haven't received complete chunk size line yet
+			// Wait for more data
+
+			// but prevent malicious clients from sending huge chunk size
+			if (_buffer.size() > 100) // shouldn't be > 100 chars before \r\n
+			{
+				_state = PARSE_ERROR;
+				_errorCode = 400; // Bad Request
+				return false;
+			}
+			return false; // need more data
+		}
+
+		// Extract chunk size line (without \r\n)
+		std::string chunkSizeLine = _buffer.substr(0, crlfPos);
+
+		// Remove chunk size line from buffer (including \r\n)
+		_buffer.erase(0, crlfPos + 2);
+
+		// ==================================
+		// Step 2: Parse Hex Chunk Size
+		// ==================================
+		// Convert hex string to integer
+		// Example: "1A" -> 26, "FF" -> 255, "0" -> 0
+
+		// Validate hex string (only 0-9, A-F, a-f allowed)
+		for (size_t i = 0; i < chunkSizeLine.length(); i++)
+		{
+			char c = chunkSizeLine[i];
+			if (!(	(c >= '0' && c <= '9') ||
+					(c >= 'A' && c <= 'F') ||
+					(c >= 'a' && c <= 'f')))
+			{
+				// Invalid character in chunk size
+				_state = PARSE_ERROR;
+				_errorCode = 400; // Bad Request
+				return false;
+			}
+		}
+
+		// Convert hex string to number
+		char* endPtr;
+		/*
+			strtoul: convert null terminated C-string to unsigned long
+					set endPtr to first non-convertable character
+					number base: 16 (hex)
+		*/
+		size_t chunkSize = std::strtoul(chunkSizeLine.c_str(), &endPtr, 16);
+
+		// Check for conversion errors
+		if (*endPtr != '\0')
+		{
+			_state = PARSE_ERROR;
+			_errorCode = 400; // Bad Request
+			return false;
+		}
+
+		// ====================================
+		//  Step 3: Handle Last Chunk (Size 0)
+		// ====================================
+		/*
+			Chunk size 0 marks end of chunked body
+			Format: "0\r\n\r\n"
+
+			After "0\r\n", there should be one more "\r\n"
+			This final CRLF marks absolute end of body
+		*/
+		if (chunkSize == 0)
+		{
+			// Last chunk! Check for final CRLF
+			if (_buffer.size() < 2)
+			{
+				// Need more data for final CRLF
+				return false;
+			}
+
+			// Verify final CRLF exists
+			if (_buffer.substr(0, 2) != "\r\n")
+			{
+				_state = PARSE_ERROR;
+				_errorCode = 400; // Bad Request
+				return false;
+			}
+
+			// Remove final CRLF
+			_buffer.erase(0, 2);
+
+			// Chunked body complete!
+			// _body now contains the un-chunked data ready for processing
+			return true;
+		}
+
+		// ===================================
+		//  Step 4: Enforce Body Size Limit
+		// ===================================
+		/*
+			Even with chunked encoding, we must limit total body size
+			Prevent DoS attacks with infinite chunks
+
+			Example attack:
+				Client sends: 1000000\r\n<1MB data>\r\n1000000\r\n<1MB data>...
+				Without limit, serer runs out of memory
+		*/
+		if (_body.size() + chunkSize > 10485760) // 10 MB limit
+		{
+			_state = PARSE_ERROR;
+			_errorCode = 413; // Payload Too Large
+			return false;
+		}
+
+		// ==========================
+		//  Step 5: Read Chunk Data
+		// ==========================
+		// We need: chunkSize bytes + "\r\n" (2 bytes)
+		size_t totalNeeded = chunkSize + 2;
+
+		if (_buffer.size() < totalNeeded)
+		{
+			// Don't have complete chunk yet, need more data
+			return false;
+		}
+
+		// Extract chunk data (without trailing \r\n)
+		std::string chunkData = _buffer.substr(0, chunkSize);
+
+		// Verify trailing CRLF after chunk data
+		if (_buffer.substr(chunkSize, 2) !="\r\n")
+		{
+			_state = PARSE_ERROR;
+			_errorCode = 400; // Bad Request - malformed chunk
+			return false;
+		}
+
+		// Remove chunk data + trailing CRLF from buffer
+		_buffer.erase(0, totalNeeded);
+
+		// ================================
+		//  Step 6: Append chunk to Body
+		// ================================
+		/*
+			Un-chunking process:
+			We remove the chunk framing (size + CRLF) and just add raw data
+		*/
+		_body.append(chunkData);
+
+		// Loop continues to parse next chunk
+		// Will return false if buffer empty (need more data)
+		// Will return true when we hit the "0\r\n\r\n" final chunk
+
+	} // end of while(true)
+
 }
 
 // =======================
