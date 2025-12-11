@@ -6,12 +6,14 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:39 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/11 16:49:21 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/11 21:55:09 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Response.hpp"
 #include <sstream>
+#include <ctime>
+#include <cstring>
 
 
 /*
@@ -21,42 +23,41 @@
 
 	The Response class encapsulates an HTTP response that we send back to clients.
 
-	HTTP Response Structure:
-	------------------------
-	HTTP/1.1 200 OK                          <- Status Line
-	Content-Type: text/html                  <- Headers
-	Content-Length: 1234
-	Connection: keep-alive
-												<- Empty line (CRLF)
-	<html>                                   <- Body
+	HTTP Response Structure (RFC 7230):
+	-----------------------------------
+	HTTP/1.1 200 OK							<- Status Line
+	Date: Wed, 11 Dec 2025 12:00:00 GMT		<- Date header (recommended)
+	Server: webserv/1.0						<- Server identification
+	Content-Type: text/html					<- MIME type of body
+	Content-Length: 1234					<- Size of body in bytes
+	Connection: keep-alive					<- Connection handling
+											<- Empty line (CRLF)
+	<html>									<- Body
 	<body>Hello World</body>
 	</html>
 
 	Status Line Components:
-	- HTTP Version: HTTP/1.1
-	- Status Code: 200 (numeric code indicating result)
-	- Reason Phrase: OK (human-readable description)
+	- HTTP Version: HTTP/1.1 (we support both 1.0 and 1.1)
+	- Status Code: 3-digit numeric code (200, 404, 500, etc.)
+	- Reason Phrase: Human-readable description ("OK", "Not Found")
 
-	Common Status Codes:
+	Status Code Categories:
+	- 1xx Informational: Request received, continuing process
 	- 2xx Success:   200 OK, 201 Created, 204 No Content
 	- 3xx Redirect:  301 Moved Permanently, 302 Found, 304 Not Modified
-	- 4xx Client Error: 400 Bad Request, 403 Forbidden, 404 Not Found, 405 Method Not Allowed
-	- 5xx Server Error: 500 Internal Server Error, 502 Bad Gateway, 504 Gateway Timeout
+	- 4xx Client Error: 400 Bad Request, 403 Forbidden, 404 Not Found
+	- 5xx Server Error: 500 Internal Server Error, 502 Bad Gateway
 
-	Headers:
-	- Key-value pairs providing metadata about the response
-	- Content-Type: tells browser how to interpret the body (MIME type)
-	- Content-Length: size of body in bytes (important for HTTP/1.1)
-	- Connection: keep-alive allows reusing TCP connection for multiple requests
+	Required Headers for HTTP/1.1:
+	- Content-Length OR Transfer-Encoding: chunked (to know body size)
+	- Date: Current server time (recommended by RFC)
+	- Server: Identifies the server software (optional but common)
+	- Content-Type: MIME type (critical for browser rendering)
+	- Connection: keep-alive or close (controls TCP connection)
 
-	Body:
-	- The actual content being sent (HTML, JSON, image data, etc.)
-	- Can be text or binary data
-	- Size must match Content-Length header
-
-	Why Response Building Matters:
+	Why correct formatting matters:
 	- Browsers are strict about HTTP format
-	- Missing CRLF (\r\n) breaks parsing
+	- Missing CRLF (\r\n) breaks parsing completely
 	- Incorrect Content-Length causes hangs or truncation
 	- Wrong Content-Type makes browsers misinterpret data
 */
@@ -82,7 +83,11 @@
 	are modified multiple times before sending.
 */
 Response::Response() :
-_statusCode(200), _reasonPhrase("OK"), _dirty(true), _keepAlive(true) {}
+	_statusCode(200),
+	_reasonPhrase("OK"),
+	_dirty(true),
+	_keepAlive(true)
+{}
 
 /*
 	Destructor
@@ -236,10 +241,10 @@ void Response::setBody(const char* data, size_t length)
 	This is CRITICAL - wrong type breaks rendering!
 
 	Common types:
-		text/html        - HTML pages
-		text/css         - Stylesheets
+		text/html		- HTML pages
+		text/css		 - Stylesheets
 		application/json - JSON data
-		image/jpeg       - JPEG images
+		image/jpeg	   - JPEG images
 		application/octet-stream - Binary/unknown
 
 	Example:
@@ -274,7 +279,7 @@ void Response::setContentLength(size_t length)
 	setConnection() - Set Connection header
 
 	Connection: keep-alive - Keep TCP connection open for next request
-	Connection: close      - Close connection after this response
+	Connection: close	  - Close connection after this response
 
 	HTTP/1.1 keep-alive benefits:
 	- Reuse TCP connection (avoid 3-way handshake overhead)
@@ -290,6 +295,123 @@ void Response::setConnection(bool keepAlive)
 {
 	_keepAlive = keepAlive;
 	setHeader("Connection", keepAlive ? "keep-alive" : "close");
+}
+
+
+
+// ================================
+//  Standard Headers (Step 6.1)
+// ================================
+
+/*
+	formatHttpDate() - Format timestamp as HTTP date string
+
+	HTTP/1.1 uses a specific date format (RFC 7231):
+	"Wed, 11 Dec 2025 12:00:00 GMT"
+
+	This format is:
+	- Day name (3 chars), comma, space
+	- Day (2 digits), space
+	- Month name (3 chars), space
+	- Year (4 digits), space
+	- Time (HH:MM:SS), space
+	- "GMT" (always GMT, never local time)
+
+	Why GMT?
+	HTTP is a global protocol. Using local time would cause confusion
+	between servers and clients in different timezones. GMT provides
+	a universal reference point.
+*/
+std::string Response::formatHttpDate(time_t timestamp)
+{
+	struct tm* gmt = gmtime(&timestamp);
+	if (!gmt)
+	{
+		return "Thu, 01 Jan 1970 00:00:00 GMT"; // Fallback to epoch
+	}
+
+	// Day and month names as required by HTTP date format
+	static const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+	static const char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+									"Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+	std::stringstream ss;
+	ss << days[gmt->tm_wday] << ", ";
+
+	// Day with leading zero if needed
+	if (gmt->tm_mday < 10)
+		ss << "0";
+	ss << gmt->tm_mday << " ";
+
+	ss << months[gmt->tm_mon] << " ";
+	ss << (1900 + gmt->tm_year) << " ";
+
+	// Time with leading zeros
+	if (gmt->tm_hour < 10)
+		ss << "0";
+	ss << gmt->tm_hour << ":";
+	if (gmt->tm_min < 10)
+		ss << "0";
+	ss << gmt->tm_min << ":";
+	if (gmt->tm_sec < 10)
+		ss << "0";
+	ss << gmt->tm_sec << " GMT";
+
+	return ss.str();
+}
+
+
+/*
+	addDateHeader() - Add current date/time header
+
+	The Date header indicates when the response was generated.
+	This is useful for:
+	- Caching (determining if content is fresh)
+	- Logging and debugging
+	- Time synchronization
+
+	RFC 7231 recommends including Date in all responses.
+*/
+void Response::addDateHeader()
+{
+	setHeader("Date", formatHttpDate(time(NULL)));
+}
+
+/*
+	addServerHeader() - Add server identification header
+
+	The Server header identifies the server software.
+	Example: "Server: webserv/1.0"
+
+	This is optional but common. It helps:
+	- Debugging (what server is responding?)
+	- Statistics (what servers are popular?)
+	- Security research (identifying vulnerable versions)
+
+	Note: Some security-conscious servers omit this header
+	or use a generic value to prevent fingerprinting.
+*/
+void Response::addServerHeader()
+{
+	setHeader("Server", "webserv/1.0");
+}
+
+/*
+	addStandardHeaders() - Add all standard headers at once
+
+	Convenience method that adds:
+	- Date: Current server time
+	- Server: Server identification
+	- Connection: Based on keep-alive setting
+
+	Call this before building the response to ensure
+	all recommended headers are present.
+*/
+void Response::addStandardHeaders()
+{
+	addDateHeader();
+	addServerHeader();
+	setConnection(_keepAlive);
 }
 
 
@@ -322,27 +444,50 @@ void Response::buildIfNeeded() const
 
 	std::stringstream ss;
 
-	// Status line: HTTP/1.1 200 OK\r\n
+	// STATUS LINE: HTTP/1.1 200 OK\r\n
 	ss << "HTTP/1.1 " << _statusCode << " " << _reasonPhrase << "\r\n";
 
-	// Headers: each "Name: Value\r\n"
+	/*
+		HEADERS
+		Format: Header-Name: Header-Value CRLF
+
+		Each header on its own line, colon-space between name and value.
+		Order doesn't matter (mostly), but consistency helps debugging.
+	*/
 	for (std::map<std::string, std::string>::const_iterator it = _headers.begin();
-														it != _headers.end(); ++it)
+		it != _headers.end(); ++it)
 	{
 		ss << it->first << ": " << it->second << "\r\n";
 	}
 
-	// Auto-add Content-Length if not manually set
-	// This is essential for HTTP/1.1 persistent connections
-	if (_headers.find("Content-Length") == _headers.end())
+	/*
+		AUTO-ADD Content-Length if not manually set
+
+		Content-Length is essential for HTTP/1.1:
+		- Tells browser exactly how many bytes to expect
+		- Enables persistent connections (keep-alive)
+		- Without it, browser doesn't know when body ends
+
+		Exception: 204 `No Content` responses shouldn't have Content-Length
+	*/
+	if (_headers.find("Content-Length") == _headers.end() && _statusCode != 204)
 	{
 		ss << "Content-Length: " << _body.size() << "\r\n";
 	}
 
-	// End of headers (blank line separates headers from body)
+	/*
+		END OF HEADERS
+		Empty line (just CRLF) separates headers from body
+		This is CRITICAL - missing empty line breaks HTTP parsing
+	*/
 	ss << "\r\n";
 
-	// Body (can be text or binary data)
+	/*
+		BODY
+		The actual content being sent.
+		Can be text (HTML, JSON) or binary (images, files).
+		Size must match Content-Length header exactly.
+	*/
 	ss << _body;
 
 	_builtResponse = ss.str();
@@ -356,8 +501,11 @@ void Response::buildIfNeeded() const
 
 	Example output:
 		"HTTP/1.1 200 OK\r\n"
+		"Date: Wed, 11 Dec 2025 12:00:00 GMT\r\n"
+		"Server: webserv/1.0\r\n"
 		"Content-Type: text/html\r\n"
 		"Content-Length: 42\r\n"
+		"Connection: keep-alive\r\n"
 		"\r\n"
 		"<html><body>Hello World</body></html>"
 */
@@ -386,6 +534,7 @@ const std::string& Response::getData() const
 	Useful for:
 	- Progress tracking
 	- Bandwidth calculations
+	- Logging
 	- Debugging
 */
 size_t Response::getSize() const
@@ -409,10 +558,43 @@ const std::string& Response::getBody() const
 	return _body;
 }
 
+const std::string& Response::getReasonPhraseValue() const
+{
+	return _reasonPhrase;
+}
+
+/*
+	getHeader() - Get a specific header value
+
+	Returns the header value if found, empty string otherwise.
+	Useful for testing and debugging.
+*/
+std::string Response::getHeader(const std::string& name) const
+{
+	std::map<std::string, std::string>::const_iterator it = _headers.find(name);
+	if (it != _headers.end())
+	{
+		return it->second;
+	}
+	return "";
+}
+
+/*
+	hasHeader() - Check if a header exists
+
+	Returns true if the header is set, false otherwise.
+*/
+bool Response::hasHeader(const std::string& name) const
+{
+	return _headers.find(name) != _headers.end();
+}
+
 bool Response::shouldKeepAlive() const
 {
 	return _keepAlive;
 }
+
+
 
 
 // ===============================
@@ -440,5 +622,269 @@ Response Response::ok(const std::string& body, const std::string& contentType)
 	response.setStatus(200);
 	response.setContentType(contentType);
 	response.setBody(body);
+	response.addStandardHeaders();
 	return response;
+}
+
+/*
+	getDefaultErrorPage() - Generate HTML for error page
+
+	Creates a simple, clean error page with:
+	- Error code and reason in title
+	- Large heading with error code
+	- Server identification
+
+	This is used when no custom error page is configured.
+*/
+std::string Response::getDefaultErrorPage(int code)
+{
+	std::ostringstream body;
+	body << "<!DOCTYPE html>\n";
+	body << "<html>\n";
+	body << "<head>\n";
+	body << "    <meta charset=\"UTF-8\">\n";
+	body << "    <title>" << code << " " << getReasonPhrase(code) << "</title>\n";
+	body << "    <style>\n";
+	body << "        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }\n";
+	body << "        h1 { font-size: 50px; color: #333; }\n";
+	body << "        p { color: #666; }\n";
+	body << "        hr { border: none; border-top: 1px solid #ddd; margin: 20px 0; }\n";
+	body << "    </style>\n";
+	body << "</head>\n";
+	body << "<body>\n";
+	body << "    <h1>" << code << "</h1>\n";
+	body << "    <p>" << getReasonPhrase(code) << "</p>\n";
+	body << "    <hr>\n";
+	body << "    <p><small>webserv/1.0</small></p>\n";
+	body << "</body>\n";
+	body << "</html>\n";
+	return body.str();
+}
+
+
+/*
+	error() - Create a default error response
+
+	Generates a complete error response with:
+	- Appropriate status code and reason phrase
+	- Default HTML error page
+	- All standard headers
+*/
+Response Response::error(int code)
+{
+	Response response;
+	response.setStatus(code);
+	response.setContentType("text/html; charset=UTF-8");
+	response.setBody(getDefaultErrorPage(code));
+	response.addStandardHeaders();
+	return response;
+}
+
+/*
+	error() - Create error response with custom body
+
+	Allows custom error pages (configured per-server).
+	Use this when the config specifies a custom error page.
+*/
+Response Response::error(int code, const std::string& customBody)
+{
+	Response response;
+	response.setStatus(code);
+	response.setContentType("text/html; charset=UTF-8");
+	response.setBody(customBody);
+	response.addStandardHeaders();
+	return response;
+}
+
+/*
+	redirect() - Create a redirect response
+
+	HTTP redirects tell the browser to go to a different URL.
+
+	Common redirect codes:
+	- 301 Moved Permanently: URL has permanently changed (cached)
+	- 302 Found: Temporary redirect (not cached)
+	- 303 See Other: Redirect after POST (use GET)
+	- 307 Temporary Redirect: Keep original method
+	- 308 Permanent Redirect: Keep original method, permanent
+
+	The Location header contains the new URL.
+	Body contains fallback HTML for clients that don't follow redirects.
+*/
+Response Response::redirect(int code, const std::string& location)
+{
+	Response response;
+	response.setStatus(code);
+	response.setHeader("Location", location);
+	response.setContentType("text/html; charset=UTF-8");
+
+	std::ostringstream body;
+	body << "<!DOCTYPE html>\n";
+	body << "<html>\n";
+	body << "<head>\n";
+	body << "    <meta charset=\"UTF-8\">\n";
+	body << "    <title>Redirect</title>\n";
+	body << "    <meta http-equiv=\"refresh\" content=\"0; url=" << location << "\">\n";
+	body << "</head>\n";
+	body << "<body>\n";
+	body << "    <h1>Redirecting...</h1>\n";
+	body << "    <p>If you are not redirected automatically, ";
+	body << "<a href=\"" << location << "\">click here</a>.</p>\n";
+	body << "</body>\n";
+	body << "</html>\n";
+
+	response.setBody(body.str());
+	response.addStandardHeaders();
+	return response;
+}
+
+/*
+	noContent() - Create a 204 No Content response
+
+	Used for successful operations that don't return content.
+	Typical use: DELETE method (file deleted successfully).
+
+	204 responses:
+	- MUST NOT have a body
+	- MUST NOT have Content-Length header (or it should be 0)
+	- Still include standard headers (Date, Server)
+*/
+Response Response::noContent()
+{
+	Response response;
+	response.setStatus(204, "No Content");
+	response.addStandardHeaders();
+	// No body, no Content-Length for 204
+	return response;
+}
+
+
+
+// ===============================
+//  Static Helpers
+// ===============================
+
+/*
+	getReasonPhrase() - Get standard reason phrase for status code
+
+	HTTP status codes have standard reason phrases defined in RFCs.
+	While the phrase is technically optional (and ignored by HTTP/2+),
+	it helps with debugging and log readability.
+
+	We support all common status codes that webserv might use.
+*/
+std::string Response::getReasonPhrase(int code)
+{
+	switch (code)
+	{
+		// 2xx Success
+		case 200: return "OK";
+		case 201: return "Created";
+		case 204: return "No Content";
+
+		// 3xx Redirection
+		case 301: return "Moved Permanently";
+		case 302: return "Found";
+		case 303: return "See Other";
+		case 304: return "Not Modified";
+		case 307: return "Temporary Redirect";
+		case 308: return "Permanent Redirect";
+
+		// 4xx Client Errors
+		case 400: return "Bad Request";
+		case 403: return "Forbidden";
+		case 404: return "Not Found";
+		case 405: return "Method Not Allowed";
+		case 408: return "Request Timeout";
+		case 409: return "Conflict";
+		case 411: return "Length Required";
+		case 413: return "Payload Too Large";
+		case 414: return "URI Too Long";
+		case 415: return "Unsupported Media Type";
+
+		// 5xx Server Errors
+		case 500: return "Internal Server Error";
+		case 501: return "Not Implemented";
+		case 502: return "Bad Gateway";
+		case 503: return "Service Unavailable";
+		case 504: return "Gateway Timeout";
+		case 505: return "HTTP Version Not Supported";
+
+		default:  return "Unknown";
+	}
+}
+
+/*
+	getMimeType() - Get MIME type from file extension
+
+	MIME types (Media Types) tell the browser how to handle content.
+	Without correct MIME type, browser might:
+	- Download instead of display HTML
+	- Show garbled text for binary files
+	- Refuse to execute JavaScript
+
+	Format: type/subtype (e.g., "text/html", "image/png")
+
+	Security note: Always set Content-Type explicitly.
+	Browser "sniffing" can cause security issues.
+*/
+std::string Response::getMimeType(const std::string& extension)
+{
+	// Text types
+	if (extension == ".html" || extension == ".htm")
+		return "text/html";
+	if (extension == ".css")
+		return "text/css";
+	if (extension == ".js")
+		return "application/javascript";
+	if (extension == ".json")
+		return "application/json";
+	if (extension == ".xml")
+		return "application/xml";
+	if (extension == ".txt")
+		return "text/plain";
+
+	// Image types
+	if (extension == ".jpg" || extension == ".jpeg")
+		return "image/jpeg";
+	if (extension == ".png")
+		return "image/png";
+	if (extension == ".gif")
+		return "image/gif";
+	if (extension == ".ico")
+		return "image/x-icon";
+	if (extension == ".svg")
+		return "image/svg+xml";
+	if (extension == ".webp")
+		return "image/webp";
+
+	// Document types
+	if (extension == ".pdf")
+		return "application/pdf";
+	if (extension == ".zip")
+		return "application/zip";
+	if (extension == ".gz" || extension == ".gzip")
+		return "application/gzip";
+	if (extension == ".tar")
+		return "application/x-tar";
+
+	// Media types
+	if (extension == ".mp3")
+		return "audio/mpeg";
+	if (extension == ".mp4")
+		return "video/mp4";
+	if (extension == ".webm")
+		return "video/webm";
+
+	// Font types
+	if (extension == ".woff")
+		return "font/woff";
+	if (extension == ".woff2")
+		return "font/woff2";
+	if (extension == ".ttf")
+		return "font/ttf";
+
+	// Default for unknown types
+	// application/octet-stream tells browser to download, not display
+	return "application/octet-stream";
 }
