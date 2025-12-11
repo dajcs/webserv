@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:30 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/10 21:39:33 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/11 09:38:50 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -18,10 +18,7 @@
 #include "Config.hpp"
 #include <string>
 
-// Forward declaration to avoid circular dependency
-class Config;
-struct ServerConfig;
-struct LocationConfig;
+
 
 class Router
 {

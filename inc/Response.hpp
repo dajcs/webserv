@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:21 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/10 21:31:33 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/11 15:59:35 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -15,6 +15,7 @@
 
 #include <string>
 #include <map>
+#include <sstream>
 
 class Response
 {
@@ -63,12 +64,12 @@ class Response
 
 		// Static factory methods for common responses
 		static Response ok(const std::string& body, const std::string& contentType = "text/html");
-		static Response error(int code);
-		static Response redirect(int code, const std::string& location);
+		// static Response error(int code);
+		// static Response redirect(int code, const std::string& location);
 
-		// Static helpers
-		static std::string getReasonPhrase(int code);
-		static std::string getMimeType(const std::string& extension);
+		// // Static helpers
+		// static std::string getReasonPhrase(int code);
+		// static std::string getMimeType(std::string& extension);
 
 
 		/*
@@ -77,7 +78,7 @@ class Response
 			MIME types tell the browser how to handle content.
 			Without correct MIME type, browser might not render correctly.
 		*/
-		std::string Response::getMimeType(const std::string& extension)
+		static std::string getMimeType(const std::string& extension)
 		{
 			// Common MIME types
 			if (extension == ".html" || extension == ".htm")
@@ -114,7 +115,7 @@ class Response
 		/*
 			error() - Create a default error response
 		*/
-		Response Response::error(int code)
+		static Response error(int code)
 		{
 			Response response;
 			response.setStatus(code);
@@ -136,7 +137,7 @@ class Response
 		/*
 			redirect() - Create a redirect response
 		*/
-		Response Response::redirect(int code, const std::string& location)
+		static Response redirect(int code, const std::string& location)
 		{
 			Response response;
 			response.setStatus(code);
@@ -159,7 +160,7 @@ class Response
 		/*
 			getReasonPhrase() - Get standard reason phrase for status code
 		*/
-		std::string Response::getReasonPhrase(int code)
+		static std::string getReasonPhrase(int code)
 		{
 			switch (code)
 			{

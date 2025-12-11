@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:03 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/10 20:55:33 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/11 15:17:59 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -712,7 +712,7 @@ const std::vector<ServerConfig>& Config::getServers() const
 */
 const ServerConfig* Config::getServerByHostPort(const std::string& host, int port) const
 {
-	for (size_t i = 0; 8 < _servers.size(); ++i)
+	for (size_t i = 0; i < _servers.size(); ++i)
 	{
 		if (_servers[i].host == host && _servers[i].port == port)
 		{
