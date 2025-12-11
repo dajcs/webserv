@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/11 21:58:56 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/11 22:06:39 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -559,19 +559,19 @@ void testMimeTypes()
 	printTestHeader("MIME TYPE TESTS");
 
 	// HTML
-	assertEqual(Response::getMimeType(".html"), std::string("text/html"),
+	assertEqual(Response::getMimeType(".html"), std::string("text/html; charset=UTF-8"),
 				"MIME type for .html");
-	assertEqual(Response::getMimeType(".htm"), std::string("text/html"),
+	assertEqual(Response::getMimeType(".htm"), std::string("text/html; charset=UTF-8"),
 				"MIME type for .htm");
 
 	// CSS and JS
-	assertEqual(Response::getMimeType(".css"), std::string("text/css"),
+	assertEqual(Response::getMimeType(".css"), std::string("text/css; charset=UTF-8"),
 				"MIME type for .css");
-	assertEqual(Response::getMimeType(".js"), std::string("application/javascript"),
+	assertEqual(Response::getMimeType(".js"), std::string("application/javascript; charset=UTF-8"),
 				"MIME type for .js");
 
 	// JSON
-	assertEqual(Response::getMimeType(".json"), std::string("application/json"),
+	assertEqual(Response::getMimeType(".json"), std::string("application/json; charset=UTF-8"),
 				"MIME type for .json");
 
 	// Images

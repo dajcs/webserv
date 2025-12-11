@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/11 16:51:46 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/11 22:09:47 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -275,13 +275,13 @@ void testMimeTypes()
 	// Test Response::getMimeType (if implemented)
 	std::string extensions[] = {".html", ".css", ".js", ".jpg", ".png", ".json", ".txt"};
 	std::string expectedTypes[] = {
-		"text/html",
-		"text/css",
-		"application/javascript",
+		"text/html; charset=UTF-8",
+		"text/css; charset=UTF-8",
+		"application/javascript; charset=UTF-8",
 		"image/jpeg",
 		"image/png",
-		"application/json",
-		"text/plain"
+		"application/json; charset=UTF-8",
+		"text/plain; charset=UTF-8"
 	};
 
 	bool allPassed = true;

@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:39 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/11 21:55:09 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/11 22:05:50 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -832,17 +832,17 @@ std::string Response::getMimeType(const std::string& extension)
 {
 	// Text types
 	if (extension == ".html" || extension == ".htm")
-		return "text/html";
+		return "text/html; charset=UTF-8";
 	if (extension == ".css")
-		return "text/css";
+		return "text/css; charset=UTF-8";
 	if (extension == ".js")
-		return "application/javascript";
+		return "application/javascript; charset=UTF-8";
 	if (extension == ".json")
-		return "application/json";
+		return "application/json; charset=UTF-8";
 	if (extension == ".xml")
-		return "application/xml";
+		return "application/xml; charset=UTF-8";
 	if (extension == ".txt")
-		return "text/plain";
+		return "text/plain; charset=UTF-8";
 
 	// Image types
 	if (extension == ".jpg" || extension == ".jpeg")
