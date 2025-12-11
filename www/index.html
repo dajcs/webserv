@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to Webserv</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 40px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        p {
+            color: #666;
+            line-height: 1.6;
+        }
+        .status {
+            background: #e8f5e9;
+            border-left: 4px solid #4caf50;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Welcome to Webserv!</h1>
+        
+        <div class="status">
+            <strong>✅ Server is running!</strong>
+            <p>Your HTTP/1.1 web server is successfully serving static files.</p>
+        </div>
+        
+        <h2>What is Webserv?</h2>
+        <p>
+            Webserv is a minimal HTTP/1.1 web server built in C++98. It uses 
+            non-blocking I/O with a single <code>poll()</code> event loop to 
+            handle multiple simultaneous connections efficiently.
+        </p>
+        
+        <h2>Features</h2>
+        <ul>
+            <li>Static file serving (GET requests)</li>
+            <li>Directory listing (autoindex)</li>
+            <li>File uploads (POST requests)</li>
+            <li>File deletion (DELETE requests)</li>
+            <li>CGI script execution (PHP, Python)</li>
+            <li>HTTP redirections</li>
+            <li>Custom error pages</li>
+        </ul>
+        
+        <h2>HTTP Methods</h2>
+        <ul>
+            <li><strong>GET</strong> - Retrieve resources</li>
+            <li><strong>POST</strong> - Submit data / upload files</li>
+            <li><strong>DELETE</strong> - Remove resources</li>
+        </ul>
+        
+        <hr>
+        <p style="color: #999; font-size: 0.9em;">
+            Built for the 42 School Webserv project.
+        </p>
+    </div>
+</body>
+</html>
