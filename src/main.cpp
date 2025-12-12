@@ -6,482 +6,551 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/12 10:02:37 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/12 16:54:39 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
-
 /*
-    ============================================================================
-    DELETE Method Unit Tests
-    ============================================================================
+	=================================
+		POST METHOD TEST SUITE
+	=================================
 
-    These tests validate the DELETE method implementation at the Router level,
-    without requiring network connectivity.
+	This file tests the POST method and file upload functionality
+	at the Router/Request/Response layer, without requiring network I/O.
 
-    Test Strategy:
-    --------------
-    We test the Router directly by:
-    1. Creating a Config object (from file or programmatically)
-    2. Creating mock Request objects that simulate HTTP requests
-    3. Calling Router::route() and checking the Response
+	Testing Strategy:
+	-----------------
+	We simulate HTTP requests by:
+	1. Creating Request objects manually
+	2. Feeding them raw HTTP data (as would come from network)
+	3. Passing to Router::route()
+	4. Verifying the Response
 
-    This approach tests:
-    - Path resolution and security
-    - File existence checking
-    - Permission handling
-    - Response generation
+	This approach tests:
+	- Multipart parsing
+	- File saving
+	- Error handling
+	- URL-encoded form parsing
 
-    Running the tests:
-    ------------------
-    Compile: g++ -Wall -Wextra -Werror -std=c++98 -I../inc \
-             test_delete.cpp Config.cpp Request.cpp Response.cpp Router.cpp \
-             Utils.cpp -o test_delete
+	Compile with:
+		g++ -std=c++98 -Wall -Wextra -Werror -I inc \
+			src/test_post.cpp src/Request.cpp src/Response.cpp \
+			src/Router.cpp src/Config.cpp src/Utils.cpp \
+			-o test_post
 
-    Run: ./test_delete
-
-    Before running, create test files:
-      mkdir -p www/uploads
-      echo "delete me" > www/uploads/test.txt
-      echo "protected" > www/uploads/protected.txt
-      chmod 444 www/uploads/protected.txt  # read-only
+	Run:
+		./test_post
 */
 
-#include "Config.hpp"
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <cstdlib>
+#include <cstring>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include "Request.hpp"
 #include "Response.hpp"
 #include "Router.hpp"
-#include <iostream>
-#include <fstream>
-#include <sys/stat.h>
-#include <cstdlib>
-#include <cstring>
-#include <unistd.h>
+#include "Config.hpp"
+#include "Utils.hpp"
+
+// ANSI color codes for test output
+#define GREEN   "\033[32m"
+#define RED     "\033[31m"
+#define YELLOW  "\033[33m"
+#define BLUE    "\033[34m"
+#define CYAN    "\033[36m"
+#define RESET   "\033[0m"
+#define BOLD    "\033[1m"
+
+// Test counters
+static int g_testsPassed = 0;
+static int g_testsFailed = 0;
+
 
 /*
-    Test utility: Create a test file with given content
+	Helper: Print test result
 */
-bool createTestFile(const std::string& path, const std::string& content)
+void printResult(const std::string& testName, bool passed, const std::string& details = "")
 {
-    std::ofstream file(path.c_str());
-    if (!file)
-    {
-        std::cerr << "Failed to create test file: " << path << std::endl;
-        return false;
-    }
-    file << content;
-    file.close();
-    return true;
+	if (passed)
+	{
+		std::cout << GREEN << "[PASS] " << RESET << testName;
+		g_testsPassed++;
+	}
+	else
+	{
+		std::cout << RED << "[FAIL] " << RESET << testName;
+		g_testsFailed++;
+	}
+
+	if (!details.empty())
+	{
+		std::cout << " - " << details;
+	}
+	std::cout << std::endl;
 }
 
+
 /*
-    Test utility: Check if a file exists
+	Helper: Create a test Request from raw HTTP data
+*/
+Request createRequest(const std::string& rawHttp)
+{
+	Request request;
+	request.parse(rawHttp);
+	return request;
+}
+
+
+/*
+	Helper: Check if file exists
 */
 bool fileExists(const std::string& path)
 {
-    struct stat st;
-    return (stat(path.c_str(), &st) == 0);
-}
-
-/*
-    Test utility: Create a directory if it doesn't exist
-*/
-bool createDirectory(const std::string& path)
-{
-    struct stat st;
-    if (stat(path.c_str(), &st) == 0)
-    {
-        return S_ISDIR(st.st_mode);
-    }
-    // Use mkdir with rwxr-xr-x permissions
-    return (mkdir(path.c_str(), 0755) == 0);
-}
-
-/*
-    Helper: Create a Request object for DELETE method
-
-    In a real scenario, the Request would be parsed from raw HTTP data.
-    For testing, we manually construct the request with the needed fields.
-*/
-Request createDeleteRequest(const std::string& path)
-{
-    /*
-        Simulating an HTTP DELETE request:
-
-        DELETE /uploads/test.txt HTTP/1.1\r\n
-        Host: localhost:8080\r\n
-        \r\n
-    */
-    Request req;
-
-    // Build raw HTTP request string and parse it
-    std::string rawRequest = "DELETE " + path + " HTTP/1.1\r\n";
-    rawRequest += "Host: localhost:8080\r\n";
-    rawRequest += "\r\n";
-
-    req.parse(rawRequest);
-    return req;
-}
-
-/*
-    Helper: Print test result with colored output (ANSI codes)
-*/
-void printResult(const std::string& testName, bool passed)
-{
-    if (passed)
-    {
-        std::cout << "\033[32m[PASS]\033[0m " << testName << std::endl;
-    }
-    else
-    {
-        std::cout << "\033[31m[FAIL]\033[0m " << testName << std::endl;
-    }
-}
-
-/*
-    ============================================================================
-    Test Cases
-    ============================================================================
-*/
-
-/*
-    Test 1: Successful file deletion
-
-    Expected: 204 No Content
-
-    Scenario:
-    1. Create a file in the upload directory
-    2. Send DELETE request for that file
-    3. Verify response is 204
-    4. Verify file no longer exists
-*/
-bool testSuccessfulDelete(Router& router)
-{
-    std::string testFile = "www/uploads/delete_test.txt";
-
-    // Setup: Create test file
-    if (!createTestFile(testFile, "This file will be deleted"))
-    {
-        std::cerr << "Setup failed: couldn't create test file" << std::endl;
-        return false;
-    }
-
-    // Verify file exists before deletion
-    if (!fileExists(testFile))
-    {
-        std::cerr << "Setup failed: test file doesn't exist" << std::endl;
-        return false;
-    }
-
-    // Create DELETE request
-    Request request = createDeleteRequest("/uploads/delete_test.txt");
-
-    // Route the request (port 8080 matches our config)
-    Response response = router.route(request, 8080);
-
-    // Check response status
-    bool statusOk = (response.getStatusCode() == 204);
-
-    // Check file is deleted
-    bool fileDeleted = !fileExists(testFile);
-
-    // Both conditions must be true
-    return (statusOk && fileDeleted);
-}
-
-/*
-    Test 2: Delete non-existent file
-
-    Expected: 404 Not Found
-
-    Scenario:
-    1. Ensure file doesn't exist
-    2. Send DELETE request for that file
-    3. Verify response is 404
-*/
-bool testDeleteNonExistent(Router& router)
-{
-    std::string testFile = "www/uploads/nonexistent_file.txt";
-
-    // Ensure file doesn't exist
-    unlink(testFile.c_str());
-
-    // Create DELETE request
-    Request request = createDeleteRequest("/uploads/nonexistent_file.txt");
-
-    // Route the request
-    Response response = router.route(request, 8080);
-
-    // Check response status
-    return (response.getStatusCode() == 404);
-}
-
-/*
-    Test 3: Delete a directory (should fail)
-
-    Expected: 409 Conflict
-
-    Scenario:
-    1. Create a directory
-    2. Send DELETE request for that directory
-    3. Verify response is 409 (conflict - can't delete directories)
-*/
-bool testDeleteDirectory(Router& router)
-{
-    std::string testDir = "www/uploads/test_directory";
-
-    // Setup: Create test directory
-    createDirectory(testDir);
-
-    // Create DELETE request for the directory
-    Request request = createDeleteRequest("/uploads/test_directory");
-
-    // Route the request
-    Response response = router.route(request, 8080);
-
-    // Cleanup
-    rmdir(testDir.c_str());
-
-    // Check response status
-    return (response.getStatusCode() == 409);
-}
-
-/*
-    Test 4: Delete with directory traversal attempt (security test)
-
-    Expected: 403 Forbidden or 404 Not Found
-
-    Scenario:
-    1. Send DELETE request with "../" in path
-    2. Verify server rejects the request
-
-    This tests protection against path traversal attacks.
-*/
-bool testDeleteDirectoryTraversal(Router& router)
-{
-    // Try to delete a file outside the uploads directory
-    // The path sanitization should prevent this
-    Request request = createDeleteRequest("/uploads/../../../etc/passwd");
-
-    // Route the request
-    Response response = router.route(request, 8080);
-
-    // Should get either 403 (Forbidden) or 404 (path sanitized to nothing)
-    int status = response.getStatusCode();
-    return (status == 403 || status == 404);
-}
-
-/*
-    Test 5: DELETE method not allowed
-
-    Expected: 405 Method Not Allowed
-
-    Scenario:
-    1. Send DELETE request to a location that doesn't allow DELETE
-    2. Verify response is 405
-
-    This tests the method allowlist from configuration.
-*/
-bool testDeleteMethodNotAllowed(Router& router)
-{
-    // Create DELETE request for root path (usually only allows GET)
-    Request request = createDeleteRequest("/index.html");
-
-    // Route the request
-    Response response = router.route(request, 8080);
-
-    // Should get 405 if DELETE is not allowed for /
-    // Note: This depends on your config having DELETE disabled for /
-    return (response.getStatusCode() == 405);
-}
-
-/*
-    Test 6: Verify 204 response has no body
-
-    Expected: Response body is empty
-
-    HTTP/1.1 specifies that 204 responses MUST NOT have a body.
-*/
-bool testNoContentResponse(Router& router)
-{
-    std::string testFile = "www/uploads/no_content_test.txt";
-
-    // Setup: Create test file
-    createTestFile(testFile, "test content");
-
-    // Create DELETE request
-    Request request = createDeleteRequest("/uploads/no_content_test.txt");
-
-    // Route the request
-    Response response = router.route(request, 8080);
-
-    // Check that body is empty for 204 response
-    if (response.getStatusCode() == 204)
-    {
-        return response.getBody().empty();
-    }
-    return false;
-}
-
-/*
-    Test 7: Idempotency - Second DELETE returns 404
-
-    Expected: First DELETE: 204, Second DELETE: 404
-
-    DELETE is idempotent: multiple identical requests should have
-    the same effect as a single request. After the first DELETE
-    removes the file, subsequent DELETEs should return 404.
-*/
-bool testDeleteIdempotency(Router& router)
-{
-    std::string testFile = "www/uploads/idempotent_test.txt";
-
-    // Setup: Create test file
-    createTestFile(testFile, "test for idempotency");
-
-    // Create DELETE request
-    Request request = createDeleteRequest("/uploads/idempotent_test.txt");
-
-    // First DELETE - should succeed
-    Response response1 = router.route(request, 8080);
-    if (response1.getStatusCode() != 204)
-    {
-        return false;
-    }
-
-    // Second DELETE - should return 404 (file already gone)
-    Response response2 = router.route(request, 8080);
-    return (response2.getStatusCode() == 404);
+	struct stat st;
+	return stat(path.c_str(), &st) == 0;
 }
 
 
 /*
-    ============================================================================
-    Main Test Runner
-    ============================================================================
+	Helper: Read file content
 */
-int main(int argc, char** argv)
+std::string readFile(const std::string& path)
 {
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "  DELETE Method Unit Tests" << std::endl;
-    std::cout << "========================================\n" << std::endl;
+	std::ifstream file(path.c_str(), std::ios::binary);
+	if (!file)
+		return "";
 
-    // Setup: Create upload directory
-    createDirectory("www");
-    createDirectory("www/uploads");
+	std::stringstream ss;
+	ss << file.rdbuf();
+	return ss.str();
+}
 
-    // Load configuration
-    std::string configPath = "config/default.conf";
-    if (argc > 1)
-    {
-        configPath = argv[1];
-    }
 
-    std::cout << "Using config: " << configPath << std::endl;
+/*
+	Helper: Clean up test files
+*/
+void cleanup(const std::string& path)
+{
+	unlink(path.c_str());
+}
 
-    try
-    {
-        Config config(configPath);
-        Router router(config);
 
-        int passed = 0;
-        int total = 0;
+// =============================================
+//  Test: Utils::extractBoundary
+// =============================================
+void testExtractBoundary()
+{
+	std::cout << "\n" << YELLOW << "=== Testing extractBoundary ===" << RESET << std::endl;
 
-        // Run all tests
-        std::cout << "\n--- Running Tests ---\n" << std::endl;
+	// Test 1: Standard boundary
+	{
+		std::string contentType = "multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxk";
+		std::string boundary = Utils::extractBoundary(contentType);
+		printResult("Standard boundary",
+					boundary == "----WebKitFormBoundary7MA4YWxk",
+					"Got: " + boundary);
+	}
 
-        total++;
-        if (testSuccessfulDelete(router))
-        {
-            printResult("1. Successful file deletion", true);
-            passed++;
-        }
-        else
-        {
-            printResult("1. Successful file deletion", false);
-        }
+	// Test 2: Quoted boundary
+	{
+		std::string contentType = "multipart/form-data; boundary=\"my-boundary-123\"";
+		std::string boundary = Utils::extractBoundary(contentType);
+		printResult("Quoted boundary",
+					boundary == "my-boundary-123",
+					"Got: " + boundary);
+	}
 
-        total++;
-        if (testDeleteNonExistent(router))
-        {
-            printResult("2. Delete non-existent file (404)", true);
-            passed++;
-        }
-        else
-        {
-            printResult("2. Delete non-existent file (404)", false);
-        }
+	// Test 3: No boundary
+	{
+		std::string contentType = "multipart/form-data";
+		std::string boundary = Utils::extractBoundary(contentType);
+		printResult("Missing boundary",
+					boundary.empty(),
+					"Got: " + boundary);
+	}
 
-        total++;
-        if (testDeleteDirectory(router))
-        {
-            printResult("3. Delete directory (409)", true);
-            passed++;
-        }
-        else
-        {
-            printResult("3. Delete directory (409)", false);
-        }
+	// Test 4: Boundary with spaces
+	{
+		std::string contentType = "multipart/form-data; boundary = simple";
+		std::string boundary = Utils::extractBoundary(contentType);
+		// Note: The space after = might be included depending on implementation
+		printResult("Boundary with spaces",
+					!boundary.empty(),
+					"Got: '" + boundary + "'");
+	}
+}
 
-        total++;
-        if (testDeleteDirectoryTraversal(router))
-        {
-            printResult("4. Directory traversal prevention", true);
-            passed++;
-        }
-        else
-        {
-            printResult("4. Directory traversal prevention", false);
-        }
 
-        total++;
-        if (testDeleteMethodNotAllowed(router))
-        {
-            printResult("5. DELETE method not allowed (405)", true);
-            passed++;
-        }
-        else
-        {
-            printResult("5. DELETE method not allowed (405)", false);
-        }
+// =============================================
+//  Test: Utils::parseContentDisposition
+// =============================================
+void testParseContentDisposition()
+{
+	std::cout << "\n" << YELLOW << "=== Testing parseContentDisposition ===" << RESET << std::endl;
 
-        total++;
-        if (testNoContentResponse(router))
-        {
-            printResult("6. 204 response has no body", true);
-            passed++;
-        }
-        else
-        {
-            printResult("6. 204 response has no body", false);
-        }
+	// Test 1: Field without filename
+	{
+		std::string header = "form-data; name=\"description\"";
+		std::string name, filename;
+		Utils::parseContentDisposition(header, name, filename);
+		printResult("Field without filename",
+					name == "description" && filename.empty(),
+					"name=" + name + ", filename=" + filename);
+	}
 
-        total++;
-        if (testDeleteIdempotency(router))
-        {
-            printResult("7. DELETE idempotency", true);
-            passed++;
-        }
-        else
-        {
-            printResult("7. DELETE idempotency", false);
-        }
+	// Test 2: File with filename
+	{
+		std::string header = "form-data; name=\"upload\"; filename=\"photo.jpg\"";
+		std::string name, filename;
+		Utils::parseContentDisposition(header, name, filename);
+		printResult("File with filename",
+					name == "upload" && filename == "photo.jpg",
+					"name=" + name + ", filename=" + filename);
+	}
 
-        // Summary
-        std::cout << "\n========================================" << std::endl;
-        std::cout << "  Results: " << passed << "/" << total << " tests passed" << std::endl;
-        std::cout << "========================================\n" << std::endl;
+	// Test 3: Complex filename
+	{
+		std::string header = "form-data; name=\"file\"; filename=\"my document (1).pdf\"";
+		std::string name, filename;
+		Utils::parseContentDisposition(header, name, filename);
+		printResult("Complex filename",
+					name == "file" && filename == "my document (1).pdf",
+					"name=" + name + ", filename=" + filename);
+	}
+}
 
-        return (passed == total) ? 0 : 1;
-    }
-    catch (const ConfigException& e)
-    {
-        std::cerr << "Config error: " << e.what() << std::endl;
-        return 1;
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Error: " << e.what() << std::endl;
-        return 1;
-    }
+
+// =============================================
+//  Test: Utils::parseMultipart
+// =============================================
+void testParseMultipart()
+{
+	std::cout << "\n" << YELLOW << "=== Testing parseMultipart ===" << RESET << std::endl;
+
+	// Test 1: Simple multipart with one file
+	{
+		std::string boundary = "----TestBoundary";
+		std::string body =
+			"------TestBoundary\r\n"
+			"Content-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\n"
+			"Content-Type: text/plain\r\n"
+			"\r\n"
+			"Hello, World!\r\n"
+			"------TestBoundary--\r\n";
+
+		std::vector<MultipartPart> parts = Utils::parseMultipart(body, boundary);
+
+		bool success = (parts.size() == 1 &&
+						parts[0].name == "file" &&
+						parts[0].filename == "test.txt" &&
+						parts[0].data == "Hello, World!");
+
+		printResult("Simple multipart with one file",
+					success,
+					"parts=" + (parts.empty() ? "0" : parts[0].name));
+	}
+
+	// Test 2: Multiple parts
+	{
+		std::string boundary = "----TestBoundary";
+		std::string body =
+			"------TestBoundary\r\n"
+			"Content-Disposition: form-data; name=\"description\"\r\n"
+			"\r\n"
+			"My file description\r\n"
+			"------TestBoundary\r\n"
+			"Content-Disposition: form-data; name=\"file\"; filename=\"data.bin\"\r\n"
+			"Content-Type: application/octet-stream\r\n"
+			"\r\n"
+			"BINARY_DATA_HERE\r\n"
+			"------TestBoundary--\r\n";
+
+		std::vector<MultipartPart> parts = Utils::parseMultipart(body, boundary);
+
+		bool success = (parts.size() == 2 &&
+						parts[0].name == "description" &&
+						parts[0].filename.empty() &&
+						parts[1].name == "file" &&
+						parts[1].filename == "data.bin");
+
+		std::stringstream details;
+		details << "parts=" << parts.size();
+		printResult("Multiple parts (field + file)",
+					success,
+					details.str());
+	}
+
+	// Test 3: Binary data
+	{
+		std::string boundary = "----TestBoundary";
+		// Create body with binary content (including null bytes)
+		std::string binaryData;
+		binaryData += '\x00';
+		binaryData += '\x01';
+		binaryData += '\x02';
+		binaryData += "text";
+		binaryData += '\x00';
+
+		std::string body =
+			"------TestBoundary\r\n"
+			"Content-Disposition: form-data; name=\"bin\"; filename=\"data.bin\"\r\n"
+			"Content-Type: application/octet-stream\r\n"
+			"\r\n" +
+			binaryData +
+			"\r\n"
+			"------TestBoundary--\r\n";
+
+		std::vector<MultipartPart> parts = Utils::parseMultipart(body, boundary);
+
+		bool success = (parts.size() == 1 && parts[0].data == binaryData);
+
+		printResult("Binary data preservation",
+					success,
+					"data length=" + (parts.empty() ? "0" :
+						static_cast<std::ostringstream&>(std::ostringstream() << parts[0].data.length()).str()));
+	}
+}
+
+
+// =============================================
+//  Test: Utils::sanitizeFilename
+// =============================================
+void testSanitizeFilename()
+{
+	std::cout << "\n" << YELLOW << "=== Testing sanitizeFilename ===" << RESET << std::endl;
+
+	// Test 1: Normal filename
+	{
+		std::string result = Utils::sanitizeFilename("photo.jpg");
+		printResult("Normal filename",
+					result == "photo.jpg",
+					"Got: " + result);
+	}
+
+	// Test 2: Path traversal attempt
+	{
+		std::string result = Utils::sanitizeFilename("../../../etc/passwd");
+		bool safe = (result.find("..") == std::string::npos &&
+					 result.find("/") == std::string::npos);
+		printResult("Path traversal blocked",
+					safe,
+					"Got: " + result);
+	}
+
+	// Test 3: Absolute path
+	{
+		std::string result = Utils::sanitizeFilename("/etc/passwd");
+		bool safe = (result.find("/") == std::string::npos);
+		printResult("Absolute path stripped",
+					safe,
+					"Got: " + result);
+	}
+
+	// Test 4: Special characters
+	{
+		std::string result = Utils::sanitizeFilename("file; rm -rf /.txt");
+		bool safe = (result.find(";") == std::string::npos &&
+					 result.find(" ") == std::string::npos);
+		printResult("Special characters removed",
+					safe,
+					"Got: " + result);
+	}
+
+	// Test 5: Hidden file (starts with .)
+	{
+		std::string result = Utils::sanitizeFilename(".htaccess");
+		bool safe = (result[0] != '.');
+		printResult("Leading dot removed",
+					safe,
+					"Got: " + result);
+	}
+}
+
+
+// =============================================
+//  Test: Utils::urlDecode
+// =============================================
+void testUrlDecode()
+{
+	std::cout << "\n" << YELLOW << "=== Testing urlDecode ===" << RESET << std::endl;
+
+	// Test 1: Simple encoding
+	{
+		std::string result = Utils::urlDecode("Hello%20World");
+		printResult("Space decoding",
+					result == "Hello World",
+					"Got: " + result);
+	}
+
+	// Test 2: Plus as space
+	{
+		std::string result = Utils::urlDecode("Hello+World");
+		printResult("Plus as space",
+					result == "Hello World",
+					"Got: " + result);
+	}
+
+	// Test 3: Special characters
+	{
+		std::string result = Utils::urlDecode("a%26b%3Dc");
+		printResult("Special characters",
+					result == "a&b=c",
+					"Got: " + result);
+	}
+}
+
+
+// =============================================
+//  Test: Full POST Request Flow
+// =============================================
+void testPostRequest()
+{
+	std::cout << "\n" << YELLOW << "=== Testing Full POST Request ===" << RESET << std::endl;
+
+	// Create a config for testing
+	Config config("config/default.conf");
+	Router router(config);
+
+	// Test 1: Simple multipart file upload
+	{
+		std::string boundary = "----TestBoundary12345";
+		std::string body =
+			"------TestBoundary12345\r\n"
+			"Content-Disposition: form-data; name=\"file\"; filename=\"testfile.txt\"\r\n"
+			"Content-Type: text/plain\r\n"
+			"\r\n"
+			"This is test content for the uploaded file.\r\n"
+			"------TestBoundary12345--\r\n";
+
+		std::string rawHttp =
+			"POST /upload HTTP/1.1\r\n"
+			"Host: localhost:8080\r\n"
+			"Content-Type: multipart/form-data; boundary=----TestBoundary12345\r\n"
+			"Content-Length: " +
+			static_cast<std::ostringstream&>(std::ostringstream() << body.length()).str() + "\r\n"
+			"\r\n" +
+			body;
+
+		Request request;
+		request.parse(rawHttp);
+
+		Response response = router.route(request, 8080);
+
+		bool success = (response.getStatusCode() == 201 ||
+						response.getStatusCode() == 200);
+
+		printResult("Multipart file upload",
+					success,
+					"Status: " +
+					static_cast<std::ostringstream&>(std::ostringstream() << response.getStatusCode()).str());
+
+		// Output response for debugging
+		if (!success)
+		{
+			std::cout << "  Response body: " << response.getBody() << std::endl;
+		}
+	}
+
+	// Test 2: URL-encoded form data
+	{
+		std::string body = "username=testuser&email=test%40example.com";
+
+		std::string rawHttp =
+			"POST /upload HTTP/1.1\r\n"
+			"Host: localhost:8080\r\n"
+			"Content-Type: application/x-www-form-urlencoded\r\n"
+			"Content-Length: " +
+			static_cast<std::ostringstream&>(std::ostringstream() << body.length()).str() + "\r\n"
+			"\r\n" +
+			body;
+
+		Request request;
+		request.parse(rawHttp);
+
+		Response response = router.route(request, 8080);
+
+		bool success = (response.getStatusCode() == 200 ||
+						response.getStatusCode() == 201);
+
+		printResult("URL-encoded form data",
+					success,
+					"Status: " +
+					static_cast<std::ostringstream&>(std::ostringstream() << response.getStatusCode()).str());
+	}
+
+	// Test 3: POST to location without upload_path (should fail)
+	{
+		std::string body = "test data";
+
+		std::string rawHttp =
+			"POST / HTTP/1.1\r\n"
+			"Host: localhost:8080\r\n"
+			"Content-Type: text/plain\r\n"
+			"Content-Length: " +
+			static_cast<std::ostringstream&>(std::ostringstream() << body.length()).str() + "\r\n"
+			"\r\n" +
+			body;
+
+		Request request;
+		request.parse(rawHttp);
+
+		Response response = router.route(request, 8080);
+
+		// Should get 403 or 405 (forbidden or method not allowed)
+		bool success = (response.getStatusCode() == 403 ||
+						response.getStatusCode() == 405);
+
+		printResult("POST to location without upload (should fail)",
+					success,
+					"Status: " +
+					static_cast<std::ostringstream&>(std::ostringstream() << response.getStatusCode()).str());
+	}
+}
+
+
+// =============================================
+//  Main
+// =============================================
+int main()
+{
+	std::cout << "\n" << YELLOW << "========================================" << RESET << std::endl;
+	std::cout << YELLOW << "  POST Method & File Upload Test Suite  " << RESET << std::endl;
+	std::cout << YELLOW << "========================================" << RESET << std::endl;
+
+	// Run all tests
+	testExtractBoundary();
+	testParseContentDisposition();
+	testParseMultipart();
+	testSanitizeFilename();
+	testUrlDecode();
+	testPostRequest();
+
+	// Print summary
+	std::cout << std::endl;
+	std::cout << BOLD << "═══════════════════════════════════════════════════════════" << RESET << std::endl;
+	std::cout << BOLD << "                    TEST SUMMARY" << RESET << std::endl;
+	std::cout << BOLD << "═══════════════════════════════════════════════════════════" << RESET << std::endl;
+	std::cout << GREEN << "  Passed: " << g_testsPassed << RESET << std::endl;
+	std::cout << RED   << "  Failed: " << g_testsFailed << RESET << std::endl;
+	std::cout << BOLD << "  Total:  " << (g_testsPassed + g_testsFailed) << RESET << std::endl;
+	std::cout << BOLD << "═══════════════════════════════════════════════════════════" << RESET << std::endl;
+
+	if (g_testsFailed == 0)
+	{
+		std::cout << std::endl;
+		std::cout << GREEN << BOLD << "  ✓ ALL TESTS PASSED!" << RESET << std::endl;
+		std::cout << std::endl;
+		return 0;
+	}
+	else
+	{
+		std::cout << std::endl;
+		std::cout << RED << BOLD << "  ✗ SOME TESTS FAILED" << RESET << std::endl;
+		std::cout << "\n" << std::endl;
+		return 1;
+	}
 }

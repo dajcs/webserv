@@ -6,12 +6,13 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/12 10:01:35 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/12 16:27:09 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Router.hpp"
 #include "Config.hpp"
+#include "Utils.hpp"
 #include <sys/stat.h>
 #include <dirent.h>
 #include <fstream>
@@ -540,6 +541,67 @@ Response Router::handleGet(const Request& request, const LocationConfig& locatio
 	return serveFile(path);
 }
 
+
+/*
+	=================================
+		POST METHOD OVERVIEW
+	=================================
+
+	POST is one of the fundamental HTTP methods used to send data to the server.
+	Unlike GET (which retrieves data), POST is designed to:
+	- Submit form data
+	- Upload files
+	- Create new resources
+	- Send data that's too large for URL query strings
+
+	Content-Types for POST:
+	-----------------------
+	1. application/x-www-form-urlencoded (default for HTML forms)
+	   - Format: key1=value1&key2=value2
+	   - Simple text data, no file support
+	   - Example: "username=john&password=secret"
+
+	2. multipart/form-data (for file uploads)
+	   - Format: MIME multipart with boundaries
+	   - Supports binary files
+	   - Each field/file is a separate "part"
+	   - Example browser usage:
+	     <form enctype="multipart/form-data">
+	       <input type="file" name="upload">
+	     </form>
+
+	3. application/json, text/plain, etc.
+	   - Raw body content
+	   - Common for REST APIs
+
+	Security Considerations:
+	------------------------
+	- ALWAYS validate Content-Length against configured max
+	- NEVER trust user-provided filenames (sanitize!)
+	- Check upload directory permissions
+	- Limit file size and count
+	- Validate file types if needed
+
+	HTTP Response Codes for POST:
+	-----------------------------
+	Success:
+		- 200 OK: Generic success with response body
+		- 201 Created: New resource created (for uploads)
+		- 204 No Content: Success, no response body
+
+	Client Errors:
+		- 400 Bad Request: Malformed request body
+		- 403 Forbidden: Uploads not allowed
+		- 409 Conflict: Resource already exists
+		- 413 Payload Too Large: Body exceeds limit
+		- 415 Unsupported Media Type: Unknown Content-Type
+
+	Server Errors:
+		- 500 Internal Server Error: Failed to save file
+		- 507 Insufficient Storage: Disk full
+
+*/
+
 /*
 	handlePost()  -  Handle POST requests
 
@@ -562,7 +624,7 @@ Response Router::handleGet(const Request& request, const LocationConfig& locatio
 */
 Response Router::handlePost(const Request& request, const LocationConfig& location)
 {
-	// Check if upload directory is configured
+	// Step 1: Check if location has upload directory configured
 	if (location.upload_path.empty())
 	{
 		// No upload directory configured - reject
@@ -570,35 +632,285 @@ Response Router::handlePost(const Request& request, const LocationConfig& locati
 		return errorResponse(403);
 	}
 
-	// For now, implement simple file upload
-	// Full implementation would parse multipart/form-data
-
-	// get Content-Type to determine how to handle body
-	std::string contenttype = request.getHeader("Content-Type");
-
-	// Simple implementation: save body as raw file
-	// Generate filename from timestamp
-	std::stringstream filename;
-	filename << location.upload_path << "/upload_" << time(NULL);
-
-	// Try to create the file
-	std::ofstream outFile(filename.str().c_str(), std::ios::binary);
-	if (!outFile)
+	// Step 2: Ensure upload directory exists
+	if (!Utils::directoryExists(location.upload_path))
 	{
-		return errorResponse(500); // Couldn't create file
+		// Try to create the directory
+		if (!Utils::createDirectory(location.upload_path))
+		{
+			// Failed to create - server configuration error
+			return errorResponse(500);
+		}
 	}
 
-	outFile << request.getBody();
-	outFile.close();
+	/*
+		Step 3: Determine Content-Type and parse accordingly
+		----------------------------------------------------
+		We need to handle two main Content-Type:
+		1. multipart/form-data - for file uploads
+		2. application/x-www-form-urlencoded - for simple form data
+	*/
+	std::string contentType = request.getHeader("Content-Type");
+	std::string contentTypeLower = Utils::toLower(contentType);
 
-	// Success - return 201 Created
-	Response response;
-	response.setStatus(201, "Created");
-	response.setHeader("Location", filename.str());
-	response.setContentType("text/plain");
-	response.setBody("File uploaded successfully\n");
+	/*
+		Step 4A: Handle multipart/form-data (file uploads)
+		--------------------------------------------------
+		This is the standard format for file uploads from HTML forms.
 
-	return response;
+		The Content-Type header looks like:
+			multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+		We need to:
+		1. Extract the boundary string
+		2. Split the body by boundaries
+		3. Parse each part's headers
+		4. Save files to disk
+	*/
+	if (Utils::startsWith(contentTypeLower, "multipart/form-data"))
+	{
+		// Extract boundary from Content-Type
+		std::string boundary = Utils::extractBoundary(contentType);
+		if (boundary.empty())
+		{
+			return errorResponse(400); // malformed request
+		}
+
+		// Parse the multipart body into individual parts
+		std::vector<MultipartPart> parts = Utils::parseMultipart(request.getBody(), boundary);
+
+		if (parts.empty())
+		{
+			return errorResponse(400); // malformed request
+		}
+
+		// Process each part
+		std::vector<std::string> savedFiles;
+		std::vector<std::string> errors;
+
+		for (size_t i = 0; i < parts.size(); ++i)
+		{
+			const MultipartPart& part = parts[i];
+
+			/*
+				Check if this part is a file upload
+				-----------------------------------
+				File uploads have a filename in Content-Disposition:
+					Content-Disposition: form-data; name="upload"; filename="photo.jpg"
+
+				Non-file fields just have name:
+					Content-Disposition: form-data; name="description"
+			*/
+			if (!part.filename.empty())
+			{
+				// Generate safe, unique filename
+				std::string savePath = Utils::generateUniqueFilename(
+												location.upload_path, part.filename);
+
+				// Open file for binary writing
+				std::ofstream outFile(savePath.c_str(), std::ios::binary);
+				if (!outFile)
+				{
+					errors.push_back("Failed to create file: " + part.filename);
+					continue;
+				}
+
+				// Write the file data
+				// Using write() instead of << to handle binary data correctly
+				outFile.write(part.data.c_str(), part.data.length());
+
+				if (outFile.fail())
+				{
+					errors.push_back("Failed to write file: " + part.filename);
+					outFile.close();
+					continue;
+				}
+
+				outFile.close();
+				savedFiles.push_back(savePath);
+			}
+			// Non-file fields are ignored for now
+			// A full implementation could process form fields too
+		}
+
+		// Generate response
+		if (savedFiles.empty() && !errors.empty())
+		{
+			// All files failed
+			return errorResponse(500);
+		}
+
+		/*
+			Build success response
+			----------------------
+			Return 201 Created with:
+			- Location header pointing to first uploaded file
+			- Body listing all uploaded files
+		*/
+		Response response;
+		response.setStatus(201, "Created");
+
+		// Set Location header to first file (if any)
+		if (!savedFiles.empty())
+		{
+			// Convert filesystem path to URL path
+			// e.g., "www/uploads/photo.jpg" -> "/uploads/photo.jpg"
+			std::string locationUrl = savedFiles[0];
+			if (Utils::startsWith(locationUrl, "www"))
+			{
+				locationUrl = locationUrl.substr(3);  // Remove "www" prefix
+			}
+			response.setHeader("Location", locationUrl);
+		}
+
+		// Build response body
+		std::stringstream bodyStream;
+		bodyStream << "Upload successful!\n\n";
+		bodyStream << "Files saved:\n";
+		for (size_t i = 0; i < savedFiles.size(); ++i)
+		{
+			bodyStream << "  - " << savedFiles[i] << "\n";
+		}
+
+		if (!errors.empty())
+		{
+			bodyStream << "\nErrors:\n";
+			for (size_t i = 0; i < errors.size(); ++i)
+			{
+				bodyStream << "  - " << errors[i] << "\n";
+			}
+		}
+
+		response.setContentType("text/plain");
+		response.setBody(bodyStream.str());
+		response.addStandardHeaders();
+
+		return response;
+
+	}  // end if "multipart/form-data"
+
+
+	/*
+		Step 4B: Handle application/x-www-form-urlencoded
+		-------------------------------------------------
+		This is the default encoding for HTML forms without files.
+		Format: key1=value1&key2=value2
+
+		Since there are no files, we just acknowledge receipt.
+		A real application might process the form data here.
+	*/
+	else if (Utils::startsWith(contentTypeLower, "application/x-www-form-urlencoded"))
+	{
+		// Parse the form data
+		std::map<std::string, std::string> formData =
+											Utils::parseFormUrlEncoded(request.getBody());
+
+		// For now, just acknowledge receipt
+		// A real implementation would do something with formData
+		Response response;
+		response.setStatus(200, "OK");
+		response.setContentType("text/plain");
+
+		std::stringstream bodyStream;
+		bodyStream << "Form data received:\n";
+		for (std::map<std::string, std::string>::const_iterator it = formData.begin();
+															 it != formData.end(); ++it)
+		{
+			bodyStream << "  " << it->first << " = " << it->second << "\n";
+		}
+
+		response.setBody(bodyStream.str());
+		response.addStandardHeaders();
+
+		return response;
+	}
+
+
+	/*
+		Step 4C: Handle raw body content
+		--------------------------------
+		If no specific Content-Type, treat body as raw data.
+		Save it as a binary file with generated name.
+
+		This handles:
+		- application/octet-stream
+		- Custom content types
+		- Missing Content-Type header
+	*/
+	else
+	{
+		// Check if body is empty
+		if (request.getBody().empty())
+		{
+			return errorResponse(400);  // Bad Request - empty body
+		}
+
+		// Generate filename from timestamp (no original name available)
+		std::stringstream filenameStream;
+		filenameStream << "upload_" << time(NULL);
+
+		// Try to determine extension from Content-Type
+		std::string extension = "";
+		if (Utils::startsWith(contentTypeLower, "image/jpeg"))
+			extension = ".jpg";
+		else if (Utils::startsWith(contentTypeLower, "image/png"))
+			extension = ".png";
+		else if (Utils::startsWith(contentTypeLower, "image/gif"))
+			extension = ".gif";
+		else if (Utils::startsWith(contentTypeLower, "text/plain"))
+			extension = ".txt";
+		else if (Utils::startsWith(contentTypeLower, "application/json"))
+			extension = ".json";
+		else
+			extension = ".bin";  // Default to binary
+
+		filenameStream << extension;
+
+		// Build full path
+		std::string savePath = location.upload_path;
+		if (!savePath.empty() && savePath[savePath.length() - 1] != '/')
+		{
+			savePath += "/";
+		}
+		savePath += filenameStream.str();
+
+		// Save the file
+		std::ofstream outFile(savePath.c_str(), std::ios::binary);
+		if (!outFile)
+		{
+			return errorResponse(500);
+		}
+
+		outFile.write(request.getBody().c_str(), request.getBody().length());
+
+		if (outFile.fail())
+		{
+			outFile.close();
+			return errorResponse(500);
+		}
+
+		outFile.close();
+
+		// Success response
+		Response response;
+		response.setStatus(201, "Created");
+
+		// Location header
+		std::string locationUrl = savePath;
+		if (Utils::startsWith(locationUrl, "www"))
+		{
+			locationUrl = locationUrl.substr(3);
+		}
+		response.setHeader("Location", locationUrl);
+
+		response.setContentType("text/plain");
+		response.setBody("File uploaded successfully: " + savePath + "\n");
+		response.addStandardHeaders();
+
+		return response;
+		
+	} // end else raw-body content
+
 }
 
 /*
