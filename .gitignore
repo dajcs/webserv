@@ -1,6 +1,6 @@
 Makefile
-main_nw.cpp
+main_*.cpp
 webserv
 *.o
 */*.o
-
+www/uploads/testfile*
