@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/11 14:46:18 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/12 10:01:35 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -604,7 +604,61 @@ Response Router::handlePost(const Request& request, const LocationConfig& locati
 /*
 	handleDelete() - Handle DELETE requests
 
-	DELETE removes a resource from the server
+	DELETE removes a resource from the server (RFC 7231)
+
+	How DELETE fits into HTTP semantics:
+	- GET:    Read a resource
+	- POST:   Create a resource
+	- PUT:    Replace a resource
+	- DELETE: Remove a resource
+
+	HTTP Response Codes for DELETE:
+	-------------------------------
+	Success:
+		- 200 OK:         Resource deleted, response body has details
+		- 202 Accepted:   Deletion queued (for async operations)
+		- 204 No Content: Resource deleted, no response body (most common)
+
+	Client Errors (4xx):
+		- 400 Bad Request:  Malformed request
+		- 403 Forbidden:    Server refuses (permissions, read-only, etc.)
+		- 404 Not Found:    Resource doesn't exist
+		- 405 Method Not Allowed: DELETE not permitted for this URI
+		- 409 Conflict:     Cannot delete (e.g., directory not empty)
+
+	Server Errors (5xx):
+		- 500 Internal Server Error: Unexpected server failure
+
+
+	Request/Response Example:
+	-------------------------
+	Request:
+		DELETE /uploads/document.txt HTTP/1.1
+		Host: localhost:8080
+
+	Response (success):
+		HTTP/1.1 204 No Content
+		Date: Thu, 12 Dec 2024 10:30:00 GMT
+		Server: webserv/1.0
+
+	Response (file not found):
+		HTTP/1.1 404 Not Found
+		Date: Thu, 12 Dec 2024 10:30:00 GMT
+		Server: webserv/1.0
+		Content-Type: text/html
+		Content-Length: 162
+
+		<html><body><h1>404 Not Found</h1></body></html>
+
+
+	Implementation Notes:
+	---------------------
+	- We use unlink() to delete files (POSIX standard)
+	- unlink() removes the directory entry; file data is freed when no
+		process has it open
+	- Directories require rmdir() or recursive deletion (not implemented)
+	- We don't support conditional DELETE (If-Match headers) - that's advanced
+
 
 	Security:
 	- Only allow deletion within allowed directories
@@ -619,6 +673,8 @@ Response Router::handlePost(const Request& request, const LocationConfig& locati
 */
 Response Router::handleDelete(const Request& request, const LocationConfig& location)
 {
+	// Convert the URI (e.g., "/uploads/file.txt") to an absolute
+	// filesystem path (e.g., "/var/www/uploads/file.txt").
 	std::string path = resolvePath(request.getPath(), location);
 
 	// check if file exists
@@ -641,9 +697,10 @@ Response Router::handleDelete(const Request& request, const LocationConfig& loca
 	}
 
 	// Success - return 204 No Content
-	Response response;
-	response.setStatus(204, "No Content");
-	return response;
+	return Response::noContent();
+	// Alternative: 200 OK with a body confirming deletion
+	// 	{"status": "deleted", "path": "/uploads/file.txt"}
+
 }
 
 
