@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/11 22:10:07 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/12 09:11:36 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -700,7 +700,10 @@ void testCopySemantics()
 		Response response;
 		response.setStatus(200);
 		response.setBody("test");
-		response = response;  // Self-assignment
+		// response = response;  // Self-assignment  -Werror doesn't like
+		// workaround for self-assignment:
+		Response& alias = response;
+		response = alias;
 		assertEqual(response.getStatusCode(), 200, "Self-assignment preserves status");
 		assertEqual(response.getBody(), std::string("test"), "Self-assignment preserves body");
 	}
