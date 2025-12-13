@@ -6,13 +6,14 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/12 16:27:09 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/13 17:48:08 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Router.hpp"
 #include "Config.hpp"
 #include "Utils.hpp"
+#include "CGI.hpp"
 #include <sys/stat.h>
 #include <dirent.h>
 #include <fstream>
@@ -468,34 +469,11 @@ bool Router::isMethodAllowed(const std::string& method, const LocationConfig& lo
 /*
 	isCgiRequest()  -  Determine if request should be handled by CGI
 
-	CGI requests are identified by file extension:
-		.php	-> PHP CGI
-		.py		-> Python CGI
-		.pl		-> Perl CGI
-
-	The location must have CGI configured for this extension
-
-	Input:
-		path:		The resolved filesystem path
-		location:	The location config
-	Returns: true if CGI should be handled, false otherwise
+	Delegates to CGI class for detection.
 */
 bool Router::isCgiRequest(const std::string& path, const LocationConfig& location)
 {
-	// Check if CGI is configured for this location
-	if (location.cgi_extension.empty() || location.cgi_path.empty())
-	{
-		return false;
-	}
-
-	// Check if path ends with the CGI extension
-	const std::string& ext = location.cgi_extension;
-	if (path.length() >= ext.length())
-	{
-		return (path.compare(path.length() - ext.length(), ext.length(), ext) == 0);
-	}
-
-	return false;
+	return CGI::isCgiRequest(path, location);
 }
 
 
@@ -908,7 +886,7 @@ Response Router::handlePost(const Request& request, const LocationConfig& locati
 		response.addStandardHeaders();
 
 		return response;
-		
+
 	} // end else raw-body content
 
 }
@@ -1167,20 +1145,14 @@ Response Router::serveDirectory(const std::string& dirpath, const LocationConfig
 
 
 // ===============================
-//  CGI Handling (Stub)
+//  CGI Handling
 // ===============================
 
 /*
 	handleCgi()  -  Execute CGI script and return response
 
-	This is a stub for now - full implementation in Phase 8
-
-	CGI execution involves:
-	1. fork() to create child process
-	2. Set up pipes for stdin/stdout
-	3. Set environment variables
-	4. execve() the CGI interpreter
-	5. Read output and parse headers
+	Step 8.1: Setup and validate CGI
+	Step 8.2: Will implement actual execution (fork/pipe/execve)
 
 	Input:
 		request: 	The HTTP request
@@ -1190,17 +1162,54 @@ Response Router::serveDirectory(const std::string& dirpath, const LocationConfig
 		Response from CGI script or error
 */
 Response Router::handleCgi(const Request& request, const std::string& scriptPath,
-							const LocationConfig& location)
+													const LocationConfig& location)
 {
-	// TODO: Implement in Phase 8 (CGI)
-	// For now, return 501 Not Implemented
-	(void)request;
-	(void)scriptPath;
-	(void)location;
+	// Create CGI handler with request context
+	CGI cgi(request, location);
 
-	return errorResponse(501);
+	// Setup: validate script, interpreter, build environment
+	if (!cgi.setup(scriptPath))
+	{
+		// Setup failed - return appropriate error
+		int errorCode = cgi.getErrorCode();
+		if (errorCode == 0)
+		{
+			errorCode = 500;  // Default to internal server error
+		}
+		return errorResponse(errorCode);
+	}
+
+	// At this point, CGI is ready for execution
+	// Step 8.2 will implement: fork(), pipe(), execve(), etc.
+
+	// For now, return a placeholder response showing CGI is detected
+	Response response;
+	response.setStatus(200, "OK");
+	response.setContentType("text/plain");
+
+	std::stringstream body;
+	body << "CGI Detection Successful!\n";
+	body << "========================\n\n";
+	body << "Script Path: " << cgi.getScriptPath() << "\n";
+	body << "Interpreter: " << cgi.getInterpreterPath() << "\n";
+	body << "Working Dir: " << cgi.getWorkingDirectory() << "\n";
+	body << "\nEnvironment Variables:\n";
+	body << "----------------------\n";
+
+	const std::map<std::string, std::string>& env = cgi.getEnvMap();
+	for (std::map<std::string, std::string>::const_iterator it = env.begin();
+		 it != env.end(); ++it)
+	{
+		body << it->first << "=" << it->second << "\n";
+	}
+
+	body << "\n[CGI Execution will be implemented in Step 8.2]\n";
+
+	response.setBody(body.str());
+	response.addStandardHeaders();
+
+	return response;
 }
-
 
 // ======================================
 //  Error Response Generation

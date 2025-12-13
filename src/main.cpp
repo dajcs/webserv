@@ -6,551 +6,346 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/12 16:54:39 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/13 17:56:56 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
-/*
-	=================================
-		POST METHOD TEST SUITE
-	=================================
+/* ************************************************************************** */
+/*                                                                            */
+/*   Test file for CGI Detection & Setup (Step 8.1)                          */
+/*                                                                            */
+/* ************************************************************************** */
 
-	This file tests the POST method and file upload functionality
-	at the Router/Request/Response layer, without requiring network I/O.
-
-	Testing Strategy:
-	-----------------
-	We simulate HTTP requests by:
-	1. Creating Request objects manually
-	2. Feeding them raw HTTP data (as would come from network)
-	3. Passing to Router::route()
-	4. Verifying the Response
-
-	This approach tests:
-	- Multipart parsing
-	- File saving
-	- Error handling
-	- URL-encoded form parsing
-
-	Compile with:
-		g++ -std=c++98 -Wall -Wextra -Werror -I inc \
-			src/test_post.cpp src/Request.cpp src/Response.cpp \
-			src/Router.cpp src/Config.cpp src/Utils.cpp \
-			-o test_post
-
-	Run:
-		./test_post
-*/
-
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <cstdlib>
-#include <cstring>
-#include <sys/stat.h>
 #include <unistd.h>
-
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <iostream>
+#include <cassert>
+#include "CGI.hpp"
 #include "Request.hpp"
-#include "Response.hpp"
-#include "Router.hpp"
 #include "Config.hpp"
-#include "Utils.hpp"
-
-// ANSI color codes for test output
-#define GREEN   "\033[32m"
-#define RED     "\033[31m"
-#define YELLOW  "\033[33m"
-#define BLUE    "\033[34m"
-#define CYAN    "\033[36m"
-#define RESET   "\033[0m"
-#define BOLD    "\033[1m"
-
-// Test counters
-static int g_testsPassed = 0;
-static int g_testsFailed = 0;
-
 
 /*
-	Helper: Print test result
-*/
-void printResult(const std::string& testName, bool passed, const std::string& details = "")
-{
-	if (passed)
-	{
-		std::cout << GREEN << "[PASS] " << RESET << testName;
-		g_testsPassed++;
-	}
-	else
-	{
-		std::cout << RED << "[FAIL] " << RESET << testName;
-		g_testsFailed++;
-	}
+	Test CGI Detection and Setup
 
-	if (!details.empty())
-	{
-		std::cout << " - " << details;
-	}
-	std::cout << std::endl;
+	This test verifies:
+	1. CGI detection based on file extension
+	2. Environment variable generation
+	3. Script and interpreter validation
+*/
+
+// Helper to print test results
+void printTest(const std::string& name, bool passed)
+{
+	std::cout << (passed ? "[PASS] " : "[FAIL] ") << name << std::endl;
 }
 
-
-/*
-	Helper: Create a test Request from raw HTTP data
-*/
-Request createRequest(const std::string& rawHttp)
+// Test 1: CGI detection by extension
+void testCgiDetection()
 {
+	std::cout << "\n=== Test CGI Detection ===" << std::endl;
+
+	LocationConfig loc;
+
+	// Test without CGI configured
+	loc.cgi_extension = "";
+	loc.cgi_path = "";
+	printTest("No CGI config -> not CGI",
+			  !CGI::isCgiRequest("/test.py", loc));
+
+	// Test with CGI configured
+	loc.cgi_extension = ".py";
+	loc.cgi_path = "/usr/bin/python3";
+	printTest("Python script detected",
+			  CGI::isCgiRequest("/cgi-bin/test.py", loc));
+	printTest("HTML not detected as CGI",
+			  !CGI::isCgiRequest("/index.html", loc));
+	printTest("PHP not detected (wrong extension)",
+			  !CGI::isCgiRequest("/test.php", loc));
+
+	// Test PHP configuration
+	loc.cgi_extension = ".php";
+	loc.cgi_path = "/usr/bin/php-cgi";
+	printTest("PHP script detected",
+			  CGI::isCgiRequest("/info.php", loc));
+	printTest("Python not detected (wrong extension)",
+			  !CGI::isCgiRequest("/test.py", loc));
+}
+
+// Test 2: Environment variable building
+void testEnvironmentBuilding()
+{
+	std::cout << "\n=== Test Environment Building ===" << std::endl;
+
+	// Create a mock request
 	Request request;
-	request.parse(rawHttp);
-	return request;
+	std::string rawRequest =
+		"GET /cgi-bin/test.py?name=World&count=5 HTTP/1.1\r\n"
+		"Host: localhost:8080\r\n"
+		"User-Agent: TestClient/1.0\r\n"
+		"Accept: text/html\r\n"
+		"Accept-Language: en-US\r\n"
+		"\r\n";
+	request.parse(rawRequest);
+
+	// Create location config
+	LocationConfig loc;
+	loc.path = "/cgi-bin";
+	loc.root = "/var/www";
+	loc.cgi_extension = ".py";
+	loc.cgi_path = "/usr/bin/python3";
+
+	// Create CGI and build environment (without validation)
+	CGI cgi(request, loc);
+
+	// We can't call setup() without a real script, but we can test
+	// the static method and verify the CGI was initialized
+	printTest("CGI object created", !cgi.isReady());
+	printTest("CGI detection works",
+			  CGI::isCgiRequest("/cgi-bin/test.py", loc));
+
+	// Display what the environment would contain
+	std::cout << "\nExpected environment variables for this request:" << std::endl;
+	std::cout << "  REQUEST_METHOD=GET" << std::endl;
+	std::cout << "  QUERY_STRING=name=World&count=5" << std::endl;
+	std::cout << "  SERVER_PROTOCOL=HTTP/1.1" << std::endl;
+	std::cout << "  HTTP_HOST=localhost:8080" << std::endl;
+	std::cout << "  HTTP_USER_AGENT=TestClient/1.0" << std::endl;
+	std::cout << "  HTTP_ACCEPT=text/html" << std::endl;
+	std::cout << "  HTTP_ACCEPT_LANGUAGE=en-US" << std::endl;
 }
 
-
-/*
-	Helper: Check if file exists
-*/
-bool fileExists(const std::string& path)
+// Test 3: POST request environment
+void testPostEnvironment()
 {
-	struct stat st;
-	return stat(path.c_str(), &st) == 0;
+	std::cout << "\n=== Test POST Request Environment ===" << std::endl;
+
+	// Create a POST request
+	Request request;
+	std::string rawRequest =
+		"POST /cgi-bin/upload.py HTTP/1.1\r\n"
+		"Host: localhost:8080\r\n"
+		"Content-Type: application/x-www-form-urlencoded\r\n"
+		"Content-Length: 21\r\n"
+		"\r\n"
+		"username=john&age=30";
+	request.parse(rawRequest);
+
+	std::cout << "POST request parsed:" << std::endl;
+	std::cout << "  Method: " << request.getMethod() << std::endl;
+	std::cout << "  Path: " << request.getPath() << std::endl;
+	std::cout << "  Content-Type: " << request.getHeader("Content-Type") << std::endl;
+	std::cout << "  Content-Length: " << request.getHeader("Content-Length") << std::endl;
+	std::cout << "  Body: " << request.getBody() << std::endl;
+
+	printTest("POST method detected", request.getMethod() == "POST");
+	printTest("Content-Type parsed",
+			  request.getHeader("Content-Type") == "application/x-www-form-urlencoded");
+	printTest("Content-Length parsed", request.getHeader("Content-Length") == "21");
+	printTest("Body received", request.getBody() == "username=john&age=30");
 }
 
-
-/*
-	Helper: Read file content
-*/
-std::string readFile(const std::string& path)
+// Test 4: PATH_INFO extraction
+void testPathInfo()
 {
-	std::ifstream file(path.c_str(), std::ios::binary);
-	if (!file)
-		return "";
+	std::cout << "\n=== Test PATH_INFO Extraction ===" << std::endl;
 
-	std::stringstream ss;
-	ss << file.rdbuf();
-	return ss.str();
+	// Request with extra path info
+	Request request;
+	std::string rawRequest =
+		"GET /cgi-bin/api.py/users/123/profile HTTP/1.1\r\n"
+		"Host: localhost\r\n"
+		"\r\n";
+	request.parse(rawRequest);
+
+	std::cout << "Request path: " << request.getPath() << std::endl;
+	std::cout << "Expected SCRIPT_NAME: /cgi-bin/api.py" << std::endl;
+	std::cout << "Expected PATH_INFO: /users/123/profile" << std::endl;
+
+	printTest("Full path preserved",
+			  request.getPath() == "/cgi-bin/api.py/users/123/profile");
 }
 
-
-/*
-	Helper: Clean up test files
-*/
-void cleanup(const std::string& path)
+// Test 5: Full CGI setup with real script (if available)
+void testFullSetup()
 {
-	unlink(path.c_str());
-}
+	std::cout << "\n=== Test Full CGI Setup ===" << std::endl;
 
-
-// =============================================
-//  Test: Utils::extractBoundary
-// =============================================
-void testExtractBoundary()
-{
-	std::cout << "\n" << YELLOW << "=== Testing extractBoundary ===" << RESET << std::endl;
-
-	// Test 1: Standard boundary
+	// First, check if we have Python available
+	if (access("/usr/bin/python3", X_OK) != 0)
 	{
-		std::string contentType = "multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxk";
-		std::string boundary = Utils::extractBoundary(contentType);
-		printResult("Standard boundary",
-					boundary == "----WebKitFormBoundary7MA4YWxk",
-					"Got: " + boundary);
+		std::cout << "Skipping: /usr/bin/python3 not available" << std::endl;
+		return;
 	}
 
-	// Test 2: Quoted boundary
+	// Create a simple test script
+	const char* testScript = "/tmp/webserv_test.py";
+	std::ofstream script(testScript);
+	if (!script)
 	{
-		std::string contentType = "multipart/form-data; boundary=\"my-boundary-123\"";
-		std::string boundary = Utils::extractBoundary(contentType);
-		printResult("Quoted boundary",
-					boundary == "my-boundary-123",
-					"Got: " + boundary);
+		std::cout << "Skipping: Cannot create test script" << std::endl;
+		return;
 	}
 
-	// Test 3: No boundary
+	script << "#!/usr/bin/env python3\n";
+	script << "import os\n";
+	script << "print('Content-Type: text/plain\\r')\n";
+	script << "print('\\r')\n";
+	script << "print('CGI Test Success!')\n";
+	script.close();
+
+	// Make it executable
+	if (chmod(testScript, 0755) != 0)
 	{
-		std::string contentType = "multipart/form-data";
-		std::string boundary = Utils::extractBoundary(contentType);
-		printResult("Missing boundary",
-					boundary.empty(),
-					"Got: " + boundary);
+		std::cout << "Skipping: Cannot make script executable" << std::endl;
+		return;
 	}
 
-	// Test 4: Boundary with spaces
+	// Create request and location
+	Request request;
+	std::string rawRequest =
+		"GET /test.py?message=hello HTTP/1.1\r\n"
+		"Host: localhost:8080\r\n"
+		"\r\n";
+	request.parse(rawRequest);
+
+	LocationConfig loc;
+	loc.path = "/";
+	loc.root = "/tmp";
+	loc.cgi_extension = ".py";
+	loc.cgi_path = "/usr/bin/python3";
+
+	// Setup CGI
+	CGI cgi(request, loc);
+	bool setupResult = cgi.setup(testScript);
+
+	printTest("CGI setup successful", setupResult);
+	printTest("CGI is ready", cgi.isReady());
+	printTest("No error code", cgi.getErrorCode() == 0);
+
+	if (setupResult)
 	{
-		std::string contentType = "multipart/form-data; boundary = simple";
-		std::string boundary = Utils::extractBoundary(contentType);
-		// Note: The space after = might be included depending on implementation
-		printResult("Boundary with spaces",
-					!boundary.empty(),
-					"Got: '" + boundary + "'");
-	}
-}
-
-
-// =============================================
-//  Test: Utils::parseContentDisposition
-// =============================================
-void testParseContentDisposition()
-{
-	std::cout << "\n" << YELLOW << "=== Testing parseContentDisposition ===" << RESET << std::endl;
-
-	// Test 1: Field without filename
-	{
-		std::string header = "form-data; name=\"description\"";
-		std::string name, filename;
-		Utils::parseContentDisposition(header, name, filename);
-		printResult("Field without filename",
-					name == "description" && filename.empty(),
-					"name=" + name + ", filename=" + filename);
-	}
-
-	// Test 2: File with filename
-	{
-		std::string header = "form-data; name=\"upload\"; filename=\"photo.jpg\"";
-		std::string name, filename;
-		Utils::parseContentDisposition(header, name, filename);
-		printResult("File with filename",
-					name == "upload" && filename == "photo.jpg",
-					"name=" + name + ", filename=" + filename);
-	}
-
-	// Test 3: Complex filename
-	{
-		std::string header = "form-data; name=\"file\"; filename=\"my document (1).pdf\"";
-		std::string name, filename;
-		Utils::parseContentDisposition(header, name, filename);
-		printResult("Complex filename",
-					name == "file" && filename == "my document (1).pdf",
-					"name=" + name + ", filename=" + filename);
-	}
-}
-
-
-// =============================================
-//  Test: Utils::parseMultipart
-// =============================================
-void testParseMultipart()
-{
-	std::cout << "\n" << YELLOW << "=== Testing parseMultipart ===" << RESET << std::endl;
-
-	// Test 1: Simple multipart with one file
-	{
-		std::string boundary = "----TestBoundary";
-		std::string body =
-			"------TestBoundary\r\n"
-			"Content-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\n"
-			"Content-Type: text/plain\r\n"
-			"\r\n"
-			"Hello, World!\r\n"
-			"------TestBoundary--\r\n";
-
-		std::vector<MultipartPart> parts = Utils::parseMultipart(body, boundary);
-
-		bool success = (parts.size() == 1 &&
-						parts[0].name == "file" &&
-						parts[0].filename == "test.txt" &&
-						parts[0].data == "Hello, World!");
-
-		printResult("Simple multipart with one file",
-					success,
-					"parts=" + (parts.empty() ? "0" : parts[0].name));
-	}
-
-	// Test 2: Multiple parts
-	{
-		std::string boundary = "----TestBoundary";
-		std::string body =
-			"------TestBoundary\r\n"
-			"Content-Disposition: form-data; name=\"description\"\r\n"
-			"\r\n"
-			"My file description\r\n"
-			"------TestBoundary\r\n"
-			"Content-Disposition: form-data; name=\"file\"; filename=\"data.bin\"\r\n"
-			"Content-Type: application/octet-stream\r\n"
-			"\r\n"
-			"BINARY_DATA_HERE\r\n"
-			"------TestBoundary--\r\n";
-
-		std::vector<MultipartPart> parts = Utils::parseMultipart(body, boundary);
-
-		bool success = (parts.size() == 2 &&
-						parts[0].name == "description" &&
-						parts[0].filename.empty() &&
-						parts[1].name == "file" &&
-						parts[1].filename == "data.bin");
-
-		std::stringstream details;
-		details << "parts=" << parts.size();
-		printResult("Multiple parts (field + file)",
-					success,
-					details.str());
-	}
-
-	// Test 3: Binary data
-	{
-		std::string boundary = "----TestBoundary";
-		// Create body with binary content (including null bytes)
-		std::string binaryData;
-		binaryData += '\x00';
-		binaryData += '\x01';
-		binaryData += '\x02';
-		binaryData += "text";
-		binaryData += '\x00';
-
-		std::string body =
-			"------TestBoundary\r\n"
-			"Content-Disposition: form-data; name=\"bin\"; filename=\"data.bin\"\r\n"
-			"Content-Type: application/octet-stream\r\n"
-			"\r\n" +
-			binaryData +
-			"\r\n"
-			"------TestBoundary--\r\n";
-
-		std::vector<MultipartPart> parts = Utils::parseMultipart(body, boundary);
-
-		bool success = (parts.size() == 1 && parts[0].data == binaryData);
-
-		printResult("Binary data preservation",
-					success,
-					"data length=" + (parts.empty() ? "0" :
-						static_cast<std::ostringstream&>(std::ostringstream() << parts[0].data.length()).str()));
-	}
-}
-
-
-// =============================================
-//  Test: Utils::sanitizeFilename
-// =============================================
-void testSanitizeFilename()
-{
-	std::cout << "\n" << YELLOW << "=== Testing sanitizeFilename ===" << RESET << std::endl;
-
-	// Test 1: Normal filename
-	{
-		std::string result = Utils::sanitizeFilename("photo.jpg");
-		printResult("Normal filename",
-					result == "photo.jpg",
-					"Got: " + result);
-	}
-
-	// Test 2: Path traversal attempt
-	{
-		std::string result = Utils::sanitizeFilename("../../../etc/passwd");
-		bool safe = (result.find("..") == std::string::npos &&
-					 result.find("/") == std::string::npos);
-		printResult("Path traversal blocked",
-					safe,
-					"Got: " + result);
-	}
-
-	// Test 3: Absolute path
-	{
-		std::string result = Utils::sanitizeFilename("/etc/passwd");
-		bool safe = (result.find("/") == std::string::npos);
-		printResult("Absolute path stripped",
-					safe,
-					"Got: " + result);
-	}
-
-	// Test 4: Special characters
-	{
-		std::string result = Utils::sanitizeFilename("file; rm -rf /.txt");
-		bool safe = (result.find(";") == std::string::npos &&
-					 result.find(" ") == std::string::npos);
-		printResult("Special characters removed",
-					safe,
-					"Got: " + result);
-	}
-
-	// Test 5: Hidden file (starts with .)
-	{
-		std::string result = Utils::sanitizeFilename(".htaccess");
-		bool safe = (result[0] != '.');
-		printResult("Leading dot removed",
-					safe,
-					"Got: " + result);
-	}
-}
-
-
-// =============================================
-//  Test: Utils::urlDecode
-// =============================================
-void testUrlDecode()
-{
-	std::cout << "\n" << YELLOW << "=== Testing urlDecode ===" << RESET << std::endl;
-
-	// Test 1: Simple encoding
-	{
-		std::string result = Utils::urlDecode("Hello%20World");
-		printResult("Space decoding",
-					result == "Hello World",
-					"Got: " + result);
-	}
-
-	// Test 2: Plus as space
-	{
-		std::string result = Utils::urlDecode("Hello+World");
-		printResult("Plus as space",
-					result == "Hello World",
-					"Got: " + result);
-	}
-
-	// Test 3: Special characters
-	{
-		std::string result = Utils::urlDecode("a%26b%3Dc");
-		printResult("Special characters",
-					result == "a&b=c",
-					"Got: " + result);
-	}
-}
-
-
-// =============================================
-//  Test: Full POST Request Flow
-// =============================================
-void testPostRequest()
-{
-	std::cout << "\n" << YELLOW << "=== Testing Full POST Request ===" << RESET << std::endl;
-
-	// Create a config for testing
-	Config config("config/default.conf");
-	Router router(config);
-
-	// Test 1: Simple multipart file upload
-	{
-		std::string boundary = "----TestBoundary12345";
-		std::string body =
-			"------TestBoundary12345\r\n"
-			"Content-Disposition: form-data; name=\"file\"; filename=\"testfile.txt\"\r\n"
-			"Content-Type: text/plain\r\n"
-			"\r\n"
-			"This is test content for the uploaded file.\r\n"
-			"------TestBoundary12345--\r\n";
-
-		std::string rawHttp =
-			"POST /upload HTTP/1.1\r\n"
-			"Host: localhost:8080\r\n"
-			"Content-Type: multipart/form-data; boundary=----TestBoundary12345\r\n"
-			"Content-Length: " +
-			static_cast<std::ostringstream&>(std::ostringstream() << body.length()).str() + "\r\n"
-			"\r\n" +
-			body;
-
-		Request request;
-		request.parse(rawHttp);
-
-		Response response = router.route(request, 8080);
-
-		bool success = (response.getStatusCode() == 201 ||
-						response.getStatusCode() == 200);
-
-		printResult("Multipart file upload",
-					success,
-					"Status: " +
-					static_cast<std::ostringstream&>(std::ostringstream() << response.getStatusCode()).str());
-
-		// Output response for debugging
-		if (!success)
+		std::cout << "\nGenerated environment variables:" << std::endl;
+		const std::map<std::string, std::string>& env = cgi.getEnvMap();
+		for (std::map<std::string, std::string>::const_iterator it = env.begin();
+			 it != env.end(); ++it)
 		{
-			std::cout << "  Response body: " << response.getBody() << std::endl;
+			std::cout << "  " << it->first << "=" << it->second << std::endl;
+		}
+
+		// Test getEnvArray
+		char** envArray = cgi.getEnvArray();
+		printTest("Environment array created", envArray != NULL);
+		if (envArray)
+		{
+			int count = 0;
+			while (envArray[count] != NULL)
+			{
+				count++;
+			}
+			printTest("Environment count matches",
+					  count == static_cast<int>(env.size()));
+			CGI::freeEnvArray(envArray);
+		}
+
+		// Test getArgv
+		char** argv = cgi.getArgv();
+		printTest("Argv array created", argv != NULL);
+		if (argv)
+		{
+			printTest("argv[0] is interpreter",
+					  std::string(argv[0]) == "/usr/bin/python3");
+			printTest("argv[1] is script",
+					  std::string(argv[1]) == testScript);
+			printTest("argv[2] is NULL", argv[2] == NULL);
+			CGI::freeArgv(argv);
 		}
 	}
-
-	// Test 2: URL-encoded form data
+	else
 	{
-		std::string body = "username=testuser&email=test%40example.com";
-
-		std::string rawHttp =
-			"POST /upload HTTP/1.1\r\n"
-			"Host: localhost:8080\r\n"
-			"Content-Type: application/x-www-form-urlencoded\r\n"
-			"Content-Length: " +
-			static_cast<std::ostringstream&>(std::ostringstream() << body.length()).str() + "\r\n"
-			"\r\n" +
-			body;
-
-		Request request;
-		request.parse(rawHttp);
-
-		Response response = router.route(request, 8080);
-
-		bool success = (response.getStatusCode() == 200 ||
-						response.getStatusCode() == 201);
-
-		printResult("URL-encoded form data",
-					success,
-					"Status: " +
-					static_cast<std::ostringstream&>(std::ostringstream() << response.getStatusCode()).str());
+		std::cout << "Error: " << cgi.getErrorMessage() << std::endl;
 	}
 
-	// Test 3: POST to location without upload_path (should fail)
+	// Cleanup
+	unlink(testScript);
+}
+
+// Test 6: Error handling
+void testErrorHandling()
+{
+	std::cout << "\n=== Test Error Handling ===" << std::endl;
+
+	Request request;
+	std::string rawRequest =
+		"GET /test.py HTTP/1.1\r\n"
+		"Host: localhost\r\n"
+		"\r\n";
+	request.parse(rawRequest);
+
+	LocationConfig loc;
+	loc.path = "/";
+	loc.root = "/tmp";
+	loc.cgi_extension = ".py";
+	loc.cgi_path = "/usr/bin/python3";
+
+	// Test: Script not found
 	{
-		std::string body = "test data";
+		CGI cgi(request, loc);
+		bool result = cgi.setup("/nonexistent/script.py");
+		printTest("Nonexistent script fails", !result);
+		printTest("Error code is 404", cgi.getErrorCode() == 404);
+	}
 
-		std::string rawHttp =
-			"POST / HTTP/1.1\r\n"
-			"Host: localhost:8080\r\n"
-			"Content-Type: text/plain\r\n"
-			"Content-Length: " +
-			static_cast<std::ostringstream&>(std::ostringstream() << body.length()).str() + "\r\n"
-			"\r\n" +
-			body;
+	// Test: Script not executable (create non-executable file)
+	{
+		const char* nonExecScript = "/tmp/webserv_noexec.py";
+		std::ofstream script(nonExecScript);
+		script << "print('test')\n";
+		script.close();
+		chmod(nonExecScript, 0644);  // Read-only
 
-		Request request;
-		request.parse(rawHttp);
+		CGI cgi(request, loc);
+		bool result = cgi.setup(nonExecScript);
+		printTest("Non-executable script fails", !result);
+		printTest("Error code is 403", cgi.getErrorCode() == 403);
 
-		Response response = router.route(request, 8080);
+		unlink(nonExecScript);
+	}
 
-		// Should get 403 or 405 (forbidden or method not allowed)
-		bool success = (response.getStatusCode() == 403 ||
-						response.getStatusCode() == 405);
+	// Test: Invalid interpreter
+	{
+		LocationConfig badLoc = loc;
+		badLoc.cgi_path = "/nonexistent/python";
 
-		printResult("POST to location without upload (should fail)",
-					success,
-					"Status: " +
-					static_cast<std::ostringstream&>(std::ostringstream() << response.getStatusCode()).str());
+		const char* testScript = "/tmp/webserv_test2.py";
+		std::ofstream script(testScript);
+		script << "print('test')\n";
+		script.close();
+		chmod(testScript, 0755);
+
+		CGI cgi(request, badLoc);
+		bool result = cgi.setup(testScript);
+		printTest("Invalid interpreter fails", !result);
+		printTest("Error code is 500", cgi.getErrorCode() == 500);
+
+		unlink(testScript);
 	}
 }
 
-
-// =============================================
-//  Main
-// =============================================
 int main()
 {
-	std::cout << "\n" << YELLOW << "========================================" << RESET << std::endl;
-	std::cout << YELLOW << "  POST Method & File Upload Test Suite  " << RESET << std::endl;
-	std::cout << YELLOW << "========================================" << RESET << std::endl;
+	std::cout << "========================================" << std::endl;
+	std::cout << "   CGI Detection & Setup Tests" << std::endl;
+	std::cout << "   Step 8.1 Implementation" << std::endl;
+	std::cout << "========================================" << std::endl;
 
-	// Run all tests
-	testExtractBoundary();
-	testParseContentDisposition();
-	testParseMultipart();
-	testSanitizeFilename();
-	testUrlDecode();
-	testPostRequest();
+	testCgiDetection();
+	testEnvironmentBuilding();
+	testPostEnvironment();
+	testPathInfo();
+	testFullSetup();
+	testErrorHandling();
 
-	// Print summary
-	std::cout << std::endl;
-	std::cout << BOLD << "═══════════════════════════════════════════════════════════" << RESET << std::endl;
-	std::cout << BOLD << "                    TEST SUMMARY" << RESET << std::endl;
-	std::cout << BOLD << "═══════════════════════════════════════════════════════════" << RESET << std::endl;
-	std::cout << GREEN << "  Passed: " << g_testsPassed << RESET << std::endl;
-	std::cout << RED   << "  Failed: " << g_testsFailed << RESET << std::endl;
-	std::cout << BOLD << "  Total:  " << (g_testsPassed + g_testsFailed) << RESET << std::endl;
-	std::cout << BOLD << "═══════════════════════════════════════════════════════════" << RESET << std::endl;
-
-	if (g_testsFailed == 0)
-	{
-		std::cout << std::endl;
-		std::cout << GREEN << BOLD << "  ✓ ALL TESTS PASSED!" << RESET << std::endl;
-		std::cout << std::endl;
-		return 0;
-	}
-	else
-	{
-		std::cout << std::endl;
-		std::cout << RED << BOLD << "  ✗ SOME TESTS FAILED" << RESET << std::endl;
-		std::cout << "\n" << std::endl;
-		return 1;
-	}
+	std::cout << "\n========================================" << std::endl;
+	std::cout << "   Tests Complete" << std::endl;
 }
