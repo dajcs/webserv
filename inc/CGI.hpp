@@ -331,6 +331,117 @@ public:
 	static void freeArgv(char** argv);
 
 
+	// ===========================
+	//  CGI Execution (Step 8.2)
+	// ===========================
+
+	/*
+		=================================================
+			CGI EXECUTION OVERVIEW (Step 8.2)
+		=================================================
+
+		CGI execution involves these system calls:
+		1. pipe()   - Create communication channels
+		2. fork()   - Create child process
+		3. dup2()   - Redirect stdin/stdout in child
+		4. chdir()  - Change to script directory
+		5. execve() - Execute the CGI interpreter
+		6. write()  - Send request body to CGI (parent)
+		7. read()   - Read CGI output (parent)
+		8. waitpid() - Wait for child to finish
+
+		The flow:
+		---------
+		Parent Process                  Child Process
+		|                               |
+		| fork() ---------------------->|
+		|                               | dup2(pipe, stdin)
+		|                               | dup2(pipe, stdout)
+		|                               | chdir(script_dir)
+		|                               | execve(interpreter, args, env)
+		|                               | [CGI script runs]
+		|<----- pipe (stdout) ----------| script outputs
+		|------ pipe (stdin)  --------->| [for POST data]
+		| waitpid()                     | exit()
+		|                               |
+
+		Why pipes?
+		----------
+		- Pipes are unidirectional communication channels
+		- We need TWO pipes:
+		  1. stdin_pipe: parent writes POST data -> child reads as stdin
+		  2. stdout_pipe: child writes output -> parent reads response
+		- Each pipe has read end (index 0) and write end (index 1)
+
+		Why fork?
+		---------
+		- CGI scripts must run in separate processes for isolation
+		- execve() replaces the current process, so we need a copy
+		- If CGI crashes or hangs, only child dies, server continues
+
+		Why dup2?
+		---------
+		- CGI scripts expect input on stdin (fd 0) and output to stdout (fd 1)
+		- dup2(pipe_read, 0) makes stdin read from our pipe
+		- dup2(pipe_write, 1) makes stdout write to our pipe
+	*/
+
+	/*
+		CGIResult - Holds the result of CGI execution
+
+		After execute() returns, this structure contains:
+		- success: Whether execution completed without system errors
+		- statusCode: HTTP status code (200, 500, 502, 504, etc.)
+		- headers: Parsed headers from CGI output
+		- body: The response body from CGI
+		- errorMessage: Description of any error
+	*/
+	struct CGIResult
+	{
+		bool success;                                   // True if CGI ran successfully
+		int statusCode;                                 // HTTP status code
+		std::map<std::string, std::string> headers;     // Parsed CGI headers
+		std::string body;                               // Response body
+		std::string errorMessage;                       // Error description (if failed)
+
+		// Constructor with default values
+		CGIResult() : success(false), statusCode(500), body(""), errorMessage("") {}
+	};
+
+	/*
+		execute() - Run the CGI script and capture output
+
+		This is the main execution function that:
+		1. Creates pipes for stdin and stdout communication
+		2. Forks a child process
+		3. In child: redirects I/O and executes the CGI script
+		4. In parent: writes POST body to stdin, reads response from stdout
+		5. Waits for child with timeout (prevents hung scripts)
+		6. Parses CGI output (headers + body)
+
+		Prerequisites:
+			- setup() must have been called successfully
+			- isReady() must return true
+
+		Parameters:
+			timeout: Maximum execution time in seconds (default: 30)
+			         If timeout is reached, child is killed and 504 returned
+
+		Returns:
+			CGIResult structure containing:
+			- success: true if CGI executed successfully
+			- statusCode: HTTP status (200, 500, 502, 504)
+			- headers: Parsed headers from CGI output
+			- body: Response body
+			- errorMessage: Description of error (if any)
+
+		Error handling:
+			- 500 Internal Server Error: fork/pipe failure, script crash
+			- 502 Bad Gateway: Invalid CGI output (missing headers)
+			- 504 Gateway Timeout: Script exceeded timeout
+	*/
+	CGIResult execute(int timeout = 30);
+
 
 private:
 	// ===========================
@@ -391,6 +502,35 @@ private:
 		This is useful for RESTful CGI scripts.
 	*/
 	std::string extractPathInfo() const;
+
+	/*
+		parseCgiOutput() - Parse CGI output into headers and body
+
+		CGI output format:
+			Header1: Value1\r\n
+			Header2: Value2\r\n
+			\r\n                    <- Empty line separates headers from body
+			<body content>
+
+		This function separates headers from body and parses each header.
+
+		Parameters:
+			output: Raw CGI output string
+			result: CGIResult to populate with parsed data
+
+		Returns:
+			true if output is valid CGI format
+			false if malformed (missing headers or separator)
+	*/
+	bool parseCgiOutput(const std::string& output, CGIResult& result);
+
+	/*
+		setNonBlocking() - Set a file descriptor to non-blocking mode
+
+		Used for pipes when we need to read with timeout.
+		fcntl(fd, F_SETFL, O_NONBLOCK)
+	*/
+	static bool setNonBlocking(int fd);
 
 
 	// ===========================

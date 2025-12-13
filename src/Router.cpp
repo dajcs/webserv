@@ -1151,23 +1151,54 @@ Response Router::serveDirectory(const std::string& dirpath, const LocationConfig
 /*
 	handleCgi()  -  Execute CGI script and return response
 
-	Step 8.1: Setup and validate CGI
-	Step 8.2: Will implement actual execution (fork/pipe/execve)
+	Step 8.1: Setup and validate CGI (environment, paths, permissions)
+	Step 8.2: Execute CGI (fork, pipe, execve) and capture output
+
+	CGI Execution Flow:
+	-------------------
+	1. Create CGI handler with request context
+	2. Setup: validate script, interpreter, build environment
+	3. Execute: fork child, redirect I/O, run script
+	4. Parse CGI output (headers + body)
+	5. Build HTTP response from CGI output
 
 	Input:
 		request: 	The HTTP request
-		scriptPath:	Path to the CGI script
-		location:	Location config
+		scriptPath:	Absolute filesystem path to the CGI script
+		location:	Location config (contains CGI settings)
+
 	Returns:
-		Response from CGI script or error
+		Response from CGI script or error response
+
+	Error Cases:
+		404 - Script not found
+		403 - Script not executable
+		500 - Internal error (fork failed, script crashed)
+		502 - Bad Gateway (malformed CGI output)
+		504 - Gateway Timeout (script took too long)
 */
 Response Router::handleCgi(const Request& request, const std::string& scriptPath,
 													const LocationConfig& location)
 {
-	// Create CGI handler with request context
+	// =========================================
+	//  Step 8.1: Setup CGI
+	// =========================================
+	/*
+		Create CGI handler with request context.
+		The CGI object stores pointers to request and location
+		for access during environment building.
+	*/
 	CGI cgi(request, location);
 
-	// Setup: validate script, interpreter, build environment
+	/*
+		Setup validates everything needed for execution:
+		- Script exists and is executable
+		- Interpreter (python, php, etc.) exists and is executable
+		- Environment variables are built
+		- Working directory is determined
+
+		If setup fails, CGI is not ready for execution.
+	*/
 	if (!cgi.setup(scriptPath))
 	{
 		// Setup failed - return appropriate error
@@ -1179,33 +1210,80 @@ Response Router::handleCgi(const Request& request, const std::string& scriptPath
 		return errorResponse(errorCode);
 	}
 
-	// At this point, CGI is ready for execution
-	// Step 8.2 will implement: fork(), pipe(), execve(), etc.
+	// =========================================
+	//  Step 8.2: Execute CGI
+	// =========================================
+	/*
+		execute() performs the actual CGI execution:
+		1. Creates pipes for stdin/stdout
+		2. Forks child process
+		3. Child: redirects I/O, executes interpreter
+		4. Parent: writes POST body, reads output
+		5. Parses output into headers and body
 
-	// For now, return a placeholder response showing CGI is detected
-	Response response;
-	response.setStatus(200, "OK");
-	response.setContentType("text/plain");
+		The timeout parameter (in seconds) prevents hung scripts.
+		Default is 30 seconds, which is reasonable for most CGI.
+	*/
+	const int CGI_TIMEOUT = 30;  // seconds
+	CGI::CGIResult cgiResult = cgi.execute(CGI_TIMEOUT);
 
-	std::stringstream body;
-	body << "CGI Detection Successful!\n";
-	body << "========================\n\n";
-	body << "Script Path: " << cgi.getScriptPath() << "\n";
-	body << "Interpreter: " << cgi.getInterpreterPath() << "\n";
-	body << "Working Dir: " << cgi.getWorkingDirectory() << "\n";
-	body << "\nEnvironment Variables:\n";
-	body << "----------------------\n";
-
-	const std::map<std::string, std::string>& env = cgi.getEnvMap();
-	for (std::map<std::string, std::string>::const_iterator it = env.begin();
-		 it != env.end(); ++it)
+	// =========================================
+	//  Handle execution failure
+	// =========================================
+	if (!cgiResult.success)
 	{
-		body << it->first << "=" << it->second << "\n";
+		/*
+			CGI execution failed - return error response.
+			The CGIResult contains the appropriate HTTP status code:
+			- 500: Internal error (fork failed, script crashed)
+			- 502: Bad Gateway (malformed CGI output)
+			- 504: Gateway Timeout (script took too long)
+		*/
+		Response response;
+		response.setStatus(cgiResult.statusCode);
+		response.setContentType("text/html");
+
+		// Build error page with details (useful for debugging)
+		std::stringstream body;
+		body << "<!DOCTYPE html>\n";
+		body << "<html>\n<head><title>CGI Error</title></head>\n";
+		body << "<body>\n";
+		body << "<h1>" << cgiResult.statusCode << " ";
+		body << Response::getReasonPhrase(cgiResult.statusCode) << "</h1>\n";
+		body << "<p>" << cgiResult.errorMessage << "</p>\n";
+		body << "<hr>\n<p><em>webserv/1.0</em></p>\n";
+		body << "</body>\n</html>\n";
+
+		response.setBody(body.str());
+		response.addStandardHeaders();
+		return response;
 	}
 
-	body << "\n[CGI Execution will be implemented in Step 8.2]\n";
+	// =========================================
+	//  Build response from CGI output
+	// =========================================
+	/*
+		CGI executed successfully. Now we need to:
+		1. Set HTTP status from CGI result
+		2. Copy headers from CGI output
+		3. Set response body
+		4. Add standard server headers
+	*/
+	Response response;
+	response.setStatus(cgiResult.statusCode);
 
-	response.setBody(body.str());
+	// Copy headers from CGI output
+	std::map<std::string, std::string>::const_iterator it;
+	for (it = cgiResult.headers.begin(); it != cgiResult.headers.end(); ++it)
+	{
+		response.setHeader(it->first, it->second);
+	}
+
+	// Set body (may be empty for redirects)
+	response.setBody(cgiResult.body);
+
+	// Add standard headers (Date, Server, Connection)
+	// These may override CGI headers if CGI set them
 	response.addStandardHeaders();
 
 	return response;

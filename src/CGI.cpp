@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:56:09 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/13 17:42:44 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/13 21:50:39 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -15,10 +15,15 @@
 #include "Config.hpp"
 
 #include <sys/stat.h>   // stat()
-#include <unistd.h>     // access()
+#include <sys/wait.h>   // waitpid()
+#include <unistd.h>     // access(), fork(), pipe(), dup2(), chdir(), execve()
+#include <signal.h>     // kill()
+#include <fcntl.h>      // fcntl(), O_NONBLOCK
 #include <cstdlib>      // malloc, free
 #include <cstring>      // strlen, strcpy
 #include <sstream>
+#include <cerrno>       // errno
+#include <ctime>        // time()
 
 /*
 	==================================
@@ -186,8 +191,8 @@ bool CGI::isCgiRequest(const std::string& path, const LocationConfig& location)
 	// Step 2: Check if path ends with the CGI extension
 	const std::string& ext = location.cgi_extension;
 
-	// Path must be at least as long as the extension
-	if (path.length() < ext.length())
+	// Path must longer than the extension
+	if (path.length() <= ext.length())
 	{
 		return false;
 	}
@@ -1035,5 +1040,715 @@ const std::string& CGI::getRequestBody() const
 const std::map<std::string, std::string>& CGI::getEnvMap() const
 {
 	return _envVars;
+}
+
+
+// =========================================
+//  CGI Execution Implementation (Step 8.2)
+// =========================================
+
+/*
+	=================================================================
+		STEP 8.2: CGI EXECUTION
+	=================================================================
+
+	This section implements the actual execution of CGI scripts.
+	It's the most complex part of CGI handling, involving:
+	- Inter-process communication (pipes)
+	- Process creation (fork)
+	- Process replacement (execve)
+	- Timeout handling
+	- Output parsing
+
+	The CGI protocol (RFC 3875) specifies:
+	- Script receives request data via environment variables
+	- POST body is sent to script's stdin
+	- Script writes response to stdout
+	- Response format: headers, blank line, body
+
+*/
+
+
+/*
+	setNonBlocking() - Set file descriptor to non-blocking mode
+
+	Non-blocking I/O is essential for timeout handling.
+	When a fd is non-blocking:
+	- read() returns -1 with errno=EAGAIN instead of blocking
+	- We can implement polling with timeout
+
+	This uses fcntl() with F_SETFL and O_NONBLOCK flags.
+
+	Parameters:
+		fd: File descriptor to modify
+
+	Returns:
+		true if successful, false on error
+*/
+bool CGI::setNonBlocking(int fd)
+{
+	// Get current flags
+	int flags = fcntl(fd, F_GETFL, 0);
+	if (flags == -1)
+	{
+		return false;
+	}
+
+	// Add non-blocking flag
+	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+
+/*
+	parseCgiOutput() - Parse raw CGI output into headers and body
+
+	CGI Output Format (RFC 3875):
+	-----------------------------
+	Content-Type: text/html\r\n
+	Set-Cookie: session=abc123\r\n
+	X-Custom-Header: value\r\n
+	\r\n                          <- Empty line (CRLF only)
+	<html>                        <- Body starts here
+	<body>Hello World</body>
+	</html>
+
+	Parsing Algorithm:
+	1. Find the header/body separator (\r\n\r\n or \n\n)
+	2. Split output at separator
+	3. Parse each header line (Name: Value format)
+	4. Store remaining content as body
+
+	Special Headers:
+	- Content-Type: Required for valid CGI response
+	- Status: CGI can set HTTP status (e.g., "Status: 404 Not Found")
+	- Location: For redirects (implies 302 if no Status)
+
+	Parameters:
+		output: Raw CGI output string
+		result: CGIResult to populate
+
+	Returns:
+		true if valid CGI output
+		false if malformed (sets 502 Bad Gateway)
+*/
+bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
+{
+	// =========================================
+	//  Step 1: Find header/body separator
+	// =========================================
+	/*
+		CGI spec requires headers and body to be separated by a blank line.
+		The blank line can be:
+		- \r\n\r\n (standard HTTP format)
+		- \n\n (simplified, some CGI scripts use this)
+
+		We try both formats for compatibility.
+	*/
+	std::string separator = "\r\n\r\n";
+	size_t separatorPos = output.find(separator);
+
+	// Try alternate format if standard not found
+	if (separatorPos == std::string::npos)
+	{
+		separator = "\n\n";
+		separatorPos = output.find(separator);
+	}
+
+	// If no separator found, CGI output is malformed
+	if (separatorPos == std::string::npos)
+	{
+		/*
+			502 Bad Gateway is the correct status for invalid CGI output.
+			It means the server (acting as gateway to CGI) received an
+			invalid response from the upstream (CGI script).
+		*/
+		result.success = false;
+		result.statusCode = 502;
+		result.errorMessage = "CGI output missing header/body separator";
+		return false;
+	}
+
+	// =========================================
+	//  Step 2: Split into headers and body
+	// =========================================
+	std::string headerSection = output.substr(0, separatorPos);
+	result.body = output.substr(separatorPos + separator.length());
+
+	// =========================================
+	//  Step 3: Parse header lines
+	// =========================================
+	/*
+		Each header line has format: "Name: Value"
+		- Name is case-insensitive (we preserve original case)
+		- Colon separates name from value
+		- Optional whitespace after colon
+		- Lines separated by \r\n or \n
+	*/
+	std::string lineDelim = (separator == "\r\n\r\n") ? "\r\n" : "\n";
+	size_t lineStart = 0;
+	size_t lineEnd;
+
+	while ((lineEnd = headerSection.find(lineDelim, lineStart)) != std::string::npos)
+	{
+		std::string line = headerSection.substr(lineStart, lineEnd - lineStart);
+		lineStart = lineEnd + lineDelim.length();
+
+		// Skip empty lines
+		if (line.empty())
+		{
+			continue;
+		}
+
+		// Find colon separator
+		size_t colonPos = line.find(':');
+		if (colonPos == std::string::npos)
+		{
+			// Invalid header line - skip it (be lenient)
+			continue;
+		}
+
+		// Extract name and value
+		std::string name = line.substr(0, colonPos);
+		std::string value = line.substr(colonPos + 1);
+
+		// Trim leading whitespace from value
+		size_t valueStart = value.find_first_not_of(" \t");
+		if (valueStart != std::string::npos)
+		{
+			value = value.substr(valueStart);
+		}
+
+		// Store header
+		result.headers[name] = value;
+	}
+
+	// Handle last line if no trailing newline
+	if (lineStart < headerSection.length())
+	{
+		std::string line = headerSection.substr(lineStart);
+		size_t colonPos = line.find(':');
+		if (colonPos != std::string::npos)
+		{
+			std::string name = line.substr(0, colonPos);
+			std::string value = line.substr(colonPos + 1);
+			size_t valueStart = value.find_first_not_of(" \t");
+			if (valueStart != std::string::npos)
+			{
+				value = value.substr(valueStart);
+			}
+			result.headers[name] = value;
+		}
+	}
+
+	// =========================================
+	//  Step 4: Determine HTTP status code
+	// =========================================
+	/*
+		CGI scripts can set HTTP status via Status header:
+			Status: 404 Not Found
+			Status: 302 Found
+
+		If no Status header:
+		- Location header present -> 302 redirect
+		- Otherwise -> 200 OK
+	*/
+	result.statusCode = 200;  // Default to OK
+
+	std::map<std::string, std::string>::iterator statusIt = result.headers.find("Status");
+	if (statusIt != result.headers.end())
+	{
+		// Parse status code from Status header value
+		// Format: "404 Not Found" or just "404"
+		std::stringstream ss(statusIt->second);
+		int code;
+		if (ss >> code)
+		{
+			result.statusCode = code;
+		}
+		// Remove Status header - it's CGI-specific, not sent to client
+		result.headers.erase(statusIt);
+	}
+	else
+	{
+		// Check for Location header (redirect)
+		if (result.headers.find("Location") != result.headers.end())
+		{
+			result.statusCode = 302;  // Found (temporary redirect)
+		}
+	}
+
+	// =========================================
+	//  Step 5: Validate minimum requirements
+	// =========================================
+	/*
+		CGI spec requires Content-Type header for document responses.
+		However, some valid responses don't have it:
+		- Redirects (Location header only)
+		- Empty responses (204 No Content)
+
+		We're lenient here - only warn, don't fail.
+	*/
+	if (result.headers.find("Content-Type") == result.headers.end() &&
+		result.headers.find("Location") == result.headers.end() &&
+		!result.body.empty())
+	{
+		// Missing Content-Type but has body - assume text/html
+		result.headers["Content-Type"] = "text/html";
+	}
+
+	result.success = true;
+	return true;
+}
+
+
+/*
+	execute() - Run CGI script and capture output
+
+	This is the main CGI execution function implementing Step 8.2.
+
+	Algorithm Overview:
+	-------------------
+	1. Create two pipes: one for stdin, one for stdout
+	2. Fork a child process
+	3. In child:
+	   a. Redirect pipes to stdin/stdout
+	   b. Close unused pipe ends
+	   c. Change to script directory
+	   d. Execute the CGI interpreter
+	4. In parent:
+	   a. Close unused pipe ends
+	   b. Write POST body to child's stdin (if any)
+	   c. Read child's stdout with timeout
+	   d. Wait for child to exit
+	5. Parse CGI output into headers + body
+	6. Return result
+
+	Parameters:
+		timeout: Maximum seconds to wait for CGI (default: 30)
+
+	Returns:
+		CGIResult with success status, headers, body, and error info
+*/
+CGI::CGIResult CGI::execute(int timeout)
+{
+	CGIResult result;
+
+	// =========================================
+	//  Pre-flight checks
+	// =========================================
+	if (!_ready)
+	{
+		result.success = false;
+		result.statusCode = 500;
+		result.errorMessage = "CGI not ready - setup() was not called or failed";
+		return result;
+	}
+
+	// =========================================
+	//  Step 1: Create pipes for communication
+	// =========================================
+	/*
+		We need TWO pipes for bidirectional communication:
+
+		stdin_pipe:
+		[0] = read end  - child reads from here (becomes stdin)
+		[1] = write end - parent writes POST data here
+
+		stdout_pipe:
+		[0] = read end  - parent reads CGI output here
+		[1] = write end - child writes to here (becomes stdout)
+
+		Pipe diagram:
+		-------------
+		Parent                          Child
+		   |                              |
+		   |---stdin_pipe[1] --> stdin_pipe[0]--->| stdin  |
+		   |                              |       | script |
+		   |<--stdout_pipe[0] <-- stdout_pipe[1]<-| stdout |
+	*/
+	int stdin_pipe[2];   // Parent writes -> Child reads (stdin)
+	int stdout_pipe[2];  // Child writes -> Parent reads (stdout)
+
+	// Create stdin pipe
+	if (pipe(stdin_pipe) == -1)
+	{
+		result.success = false;
+		result.statusCode = 500;
+		result.errorMessage = "Failed to create stdin pipe for CGI";
+		return result;
+	}
+
+	// Create stdout pipe
+	if (pipe(stdout_pipe) == -1)
+	{
+		// Clean up stdin pipe on failure
+		close(stdin_pipe[0]);
+		close(stdin_pipe[1]);
+		result.success = false;
+		result.statusCode = 500;
+		result.errorMessage = "Failed to create stdout pipe for CGI";
+		return result;
+	}
+
+	// =========================================
+	//  Step 2: Fork child process
+	// =========================================
+	/*
+		fork() creates a copy of the current process:
+		- Returns 0 in child process
+		- Returns child's PID in parent process
+		- Returns -1 on error
+
+		After fork, both processes have copies of all file descriptors.
+		Each process must close the pipe ends it doesn't use.
+	*/
+	pid_t pid = fork();
+
+	if (pid == -1)
+	{
+		// Fork failed - clean up pipes
+		close(stdin_pipe[0]);
+		close(stdin_pipe[1]);
+		close(stdout_pipe[0]);
+		close(stdout_pipe[1]);
+
+		result.success = false;
+		result.statusCode = 500;
+		result.errorMessage = "Failed to fork process for CGI execution";
+		return result;
+	}
+
+	// =========================================
+	//  Child Process (pid == 0)
+	// =========================================
+	if (pid == 0)
+	{
+		/*
+			CHILD PROCESS - This code runs in the forked child
+
+			We need to:
+			1. Set up stdin/stdout to use our pipes
+			2. Close unused file descriptors
+			3. Change to script directory
+			4. Replace this process with CGI interpreter
+
+			If anything fails, we call _exit() not exit() to avoid
+			flushing parent's stdio buffers.
+		*/
+
+		// =========================================
+		//  Step 3a: Redirect stdin to read from pipe
+		// =========================================
+		/*
+			dup2(oldfd, newfd) makes newfd refer to the same file as oldfd.
+
+			dup2(stdin_pipe[0], STDIN_FILENO):
+			- Makes file descriptor 0 (stdin) point to stdin_pipe[0]
+			- Now when script reads from stdin, it reads from our pipe
+		*/
+		if (dup2(stdin_pipe[0], STDIN_FILENO) == -1)
+		{
+			_exit(1);  // Exit with error - parent will detect this
+		}
+
+		// =========================================
+		//  Step 3b: Redirect stdout to write to pipe
+		// =========================================
+		/*
+			dup2(stdout_pipe[1], STDOUT_FILENO):
+			- Makes file descriptor 1 (stdout) point to stdout_pipe[1]
+			- Now when script writes to stdout, it writes to our pipe
+		*/
+		if (dup2(stdout_pipe[1], STDOUT_FILENO) == -1)
+		{
+			_exit(1);
+		}
+
+		// =========================================
+		//  Step 3c: Close unused pipe ends
+		// =========================================
+		/*
+			After dup2, we have copies of the pipe fds at 0 and 1.
+			Close the original pipe fds to:
+			- Avoid fd leaks
+			- Allow proper EOF detection
+
+			Child doesn't need:
+			- stdin_pipe[1] (parent's write end)
+			- stdout_pipe[0] (parent's read end)
+			- stdin_pipe[0] (we copied it to stdin)
+			- stdout_pipe[1] (we copied it to stdout)
+		*/
+		close(stdin_pipe[0]);   // Copied to stdin
+		close(stdin_pipe[1]);   // Parent's write end
+		close(stdout_pipe[0]);  // Parent's read end
+		close(stdout_pipe[1]);  // Copied to stdout
+
+		// =========================================
+		//  Step 3d: Change to script directory
+		// =========================================
+		/*
+			CGI scripts often use relative paths for files.
+			chdir() ensures relative paths resolve correctly.
+
+			Example:
+			Script: /var/www/cgi-bin/app.py
+			Script does: open("config.json")
+			Without chdir: looks in webserv's directory
+			With chdir: looks in /var/www/cgi-bin/
+		*/
+		if (chdir(_workingDirectory.c_str()) == -1)
+		{
+			// Can't change directory - continue anyway
+			// Script might still work with absolute paths
+		}
+
+		// =========================================
+		//  Step 3e: Prepare argv and envp for execve
+		// =========================================
+		char** argv = getArgv();
+		char** envp = getEnvArray();
+
+		if (!argv || !envp)
+		{
+			// Memory allocation failed
+			if (argv) freeArgv(argv);
+			if (envp) freeEnvArray(envp);
+			_exit(1);
+		}
+
+		// =========================================
+		//  Step 3f: Execute the CGI interpreter
+		// =========================================
+		/*
+			execve() replaces the current process with a new program:
+			- argv[0]: interpreter path (/usr/bin/python3)
+			- argv[1]: script path (/var/www/cgi-bin/test.py)
+			- envp: environment variables array
+
+			execve() only returns if it fails.
+			On success, this process becomes the CGI script.
+		*/
+		execve(_interpreterPath.c_str(), argv, envp);
+
+		// If we get here, execve failed
+		// Free memory (though process is about to exit)
+		freeArgv(argv);
+		freeEnvArray(envp);
+
+		// Exit with error code
+		_exit(1);
+	}
+
+	// =========================================
+	//  Parent Process (pid > 0)
+	// =========================================
+	/*
+		PARENT PROCESS - This code runs in the original webserv process
+
+		We need to:
+		1. Close unused pipe ends
+		2. Write POST body to child's stdin
+		3. Read CGI output from child's stdout
+		4. Wait for child to finish (with timeout)
+		5. Parse output
+	*/
+
+	// =========================================
+	//  Step 4a: Close unused pipe ends
+	// =========================================
+	/*
+		Parent doesn't need:
+		- stdin_pipe[0] (child's read end)
+		- stdout_pipe[1] (child's write end)
+
+		Closing stdout_pipe[1] is CRITICAL:
+		- Child's write end is the only one left
+		- When child exits, read() on stdout_pipe[0] will return 0 (EOF)
+		- If we don't close our copy, read() would block forever
+	*/
+	close(stdin_pipe[0]);   // Child's read end
+	close(stdout_pipe[1]);  // Child's write end
+
+	// =========================================
+	//  Step 4b: Write request body to stdin
+	// =========================================
+	/*
+		For POST requests, the request body must be sent to CGI via stdin.
+		The CONTENT_LENGTH env var tells script how many bytes to expect.
+
+		Important: We must close the write end after writing!
+		This sends EOF to the child, signaling end of input.
+	*/
+	const std::string& requestBody = getRequestBody();
+	if (!requestBody.empty())
+	{
+		// Write the entire body
+		// Note: In production, should handle partial writes
+		ssize_t written = write(stdin_pipe[1], requestBody.c_str(), requestBody.size());
+		(void)written;  // Ignore return value for simplicity
+	}
+
+	// Close write end - signals EOF to child
+	close(stdin_pipe[1]);
+
+	// =========================================
+	//  Step 4c: Read CGI output with timeout
+	// =========================================
+	/*
+		We need to read all output from the child while also
+		respecting the timeout. If script runs too long, we
+		must kill it and return 504 Gateway Timeout.
+
+		Approach:
+		1. Set pipe to non-blocking
+		2. Use select() or poll() with timeout
+		3. Read in chunks until EOF or timeout
+	*/
+	setNonBlocking(stdout_pipe[0]);
+
+	std::string cgiOutput;
+	char buffer[4096];
+	time_t startTime = time(NULL);
+	bool timedOut = false;
+
+	while (true)
+	{
+		// Check timeout
+		if (time(NULL) - startTime >= timeout)
+		{
+			timedOut = true;
+			break;
+		}
+
+		// Try to read from pipe
+		ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer) - 1);
+
+		if (bytesRead > 0)
+		{
+			// Got data - append to output
+			buffer[bytesRead] = '\0';
+			cgiOutput.append(buffer, bytesRead);
+		}
+		else if (bytesRead == 0)
+		{
+			// EOF - child closed stdout (finished writing)
+			break;
+		}
+		else
+		{
+			// bytesRead == -1
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+			{
+				// No data available right now - wait a bit and retry
+				// This is a simple polling approach
+				// In production, use select()/poll() for efficiency
+				usleep(10000);  // 10ms
+				continue;
+			}
+			else
+			{
+				// Real error
+				break;
+			}
+		}
+	}
+
+	// Close read end
+	close(stdout_pipe[0]);
+
+	// =========================================
+	//  Step 4d: Handle timeout
+	// =========================================
+	if (timedOut)
+	{
+		/*
+			Script exceeded timeout - need to kill it.
+
+			kill(pid, SIGTERM) sends termination signal.
+			Then waitpid() reaps the zombie process.
+
+			504 Gateway Timeout is the appropriate status code.
+		*/
+		kill(pid, SIGTERM);
+
+		// Wait for child to actually terminate (prevent zombie)
+		int status;
+		waitpid(pid, &status, 0);
+
+		result.success = false;
+		result.statusCode = 504;
+		result.errorMessage = "CGI script exceeded timeout";
+		return result;
+	}
+
+	// =========================================
+	//  Step 4e: Wait for child process
+	// =========================================
+	/*
+		waitpid() blocks until child exits and gets exit status.
+		WIFEXITED checks if child exited normally (vs killed by signal).
+		WEXITSTATUS gets the exit code (0 = success typically).
+
+		We must always waitpid() to prevent zombie processes.
+	*/
+	int status;
+	waitpid(pid, &status, 0);
+
+	// Check if child exited normally
+	if (!WIFEXITED(status))
+	{
+		// Child was killed by signal or crashed
+		result.success = false;
+		result.statusCode = 500;
+		result.errorMessage = "CGI script terminated abnormally";
+		return result;
+	}
+
+	// Check exit code (optional - non-zero doesn't always mean failure)
+	int exitCode = WEXITSTATUS(status);
+	if (exitCode != 0 && cgiOutput.empty())
+	{
+		// Script exited with error and produced no output
+		result.success = false;
+		result.statusCode = 500;
+		result.errorMessage = "CGI script exited with error code: " +
+		                      static_cast<std::ostringstream*>(&(std::ostringstream() << exitCode))->str();
+		return result;
+	}
+
+	// =========================================
+	//  Step 5: Parse CGI output
+	// =========================================
+	/*
+		CGI output format: headers + blank line + body
+		parseCgiOutput() separates these and validates format.
+
+		If output is malformed, we return 502 Bad Gateway.
+	*/
+	if (cgiOutput.empty())
+	{
+		result.success = false;
+		result.statusCode = 500;
+		result.errorMessage = "CGI script produced no output";
+		return result;
+	}
+
+	if (!parseCgiOutput(cgiOutput, result))
+	{
+		// parseCgiOutput sets error info in result
+		return result;
+	}
+
+	// =========================================
+	//  Success!
+	// =========================================
+	result.success = true;
+	return result;
 }
 
