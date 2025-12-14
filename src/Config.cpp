@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:03 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/11 15:17:59 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/14 17:45:08 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -618,11 +618,42 @@ void Config::parseLocationBlock(std::ifstream& file, std::string& line, ServerCo
 		else if (directive == "return")
 		{
 			/*
-				return directive: HTTP redirection
-				Example: return 301 https://newsite.com;
-				301 = permanent redirect (browsers cache this)
-				302 = temporary redirect
-				Used for URL restructuring or forcing HTTPS
+				HTTP Redirections:
+					"the resource is somewhere else, go there instead."
+
+				Common Use Cases:
+				1. URL restructuring: /old-page → /new-page
+				2. Forcing HTTPS: http://... → https://...
+				3. Domain consolidation: www.site.com → site.com
+				4. Temporary maintenance: / → /maintenance.html
+
+				Status Codes:
+				- 301 Moved Permanently:
+					* Browser caches this redirect
+					* Search engines update their index
+
+				- 302 Found (Temporary Redirect):
+					* Browser doesn't cache
+					* Search engines keep old URL
+
+				- 303 See Other:
+					* Forces GET method on redirect
+					* Used after POST to prevent re-submission
+
+				- 307 Temporary Redirect:
+					* Preserves HTTP method
+					* More strict than 302
+
+				- 308 Permanent Redirect:
+					* Like 301 but preserves HTTP method
+
+				Config Format:
+					return <status_code> <url>;
+
+				Examples:
+					return 301 /new-location;        # Relative URL
+					return 302 https://other.com;   # Absolute URL
+					return 301;                      # Status only (empty body)
 			*/
 			if (tokens.size() < 2)
 			{

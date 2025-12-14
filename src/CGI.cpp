@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:56:09 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/14 16:22:00 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/14 17:00:41 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -19,16 +19,13 @@
 		CGI Implementation Overview
 	==================================
 
-	This file implements CGI (Common Gateway Interface) detection and setup.
-	The actual execution (fork, pipe, execve) will be in Step 8.2.
-
 	CGI Flow in webserv:
 	--------------------
 	1. Request arrives: GET /cgi-bin/hello.py?name=World
 	2. Router calls isCgiRequest() -> true (matches .py extension)
 	3. Router creates CGI object and calls setup()
 	4. CGI::setup() validates script, builds environment
-	5. Router calls CGI::execute() (Step 8.2)
+	5. Router calls CGI::execute()
 	6. CGI output is parsed and sent back as HTTP response
 
 	Environment Variables Deep Dive:

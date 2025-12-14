@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:39 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/11 22:05:50 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/14 17:49:56 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -699,17 +699,41 @@ Response Response::error(int code, const std::string& customBody)
 /*
 	redirect() - Create a redirect response
 
-	HTTP redirects tell the browser to go to a different URL.
+	HTTP Redirect Response Structure:
+	---------------------------------
+	HTTP/1.1 301 Moved Permanently\r\n
+	Location: /new-url\r\n
+	Content-Type: text/html; charset=UTF-8\r\n
+	Content-Length: <length>\r\n
+	Date: Wed, 11 Dec 2025 12:00:00 GMT\r\n
+	Server: webserv/1.0\r\n
+	\r\n
+	<html>...fallback content...</html>
 
-	Common redirect codes:
-	- 301 Moved Permanently: URL has permanently changed (cached)
-	- 302 Found: Temporary redirect (not cached)
-	- 303 See Other: Redirect after POST (use GET)
-	- 307 Temporary Redirect: Keep original method
-	- 308 Permanent Redirect: Keep original method, permanent
+	The Location Header:
+	--------------------
+	This is the key header that tells the client where to go.
+	It can be:
+	- Relative URL: /new-page (resolved against current host)
+	- Absolute URL: https://example.com/page
 
-	The Location header contains the new URL.
-	Body contains fallback HTML for clients that don't follow redirects.
+	The Body:
+	---------
+	Although browsers follow the Location header automatically,
+	we include an HTML body with a clickable link as fallback for:
+	- Very old browsers that don't auto-redirect
+	- Command-line tools like curl (without -L flag)
+	- Users who want to see what's happening
+
+	We also include a <meta http-equiv="refresh"> tag as another
+	fallback mechanism that works in most browsers.
+
+	Parameters:
+		code:     HTTP status code (301, 302, 303, 307, 308)
+		location: The URL to redirect to
+
+	Returns:
+		Complete Response object ready to send
 */
 Response Response::redirect(int code, const std::string& location)
 {
@@ -718,12 +742,14 @@ Response Response::redirect(int code, const std::string& location)
 	response.setHeader("Location", location);
 	response.setContentType("text/html; charset=UTF-8");
 
+	// Build fallback HTML body
 	std::ostringstream body;
 	body << "<!DOCTYPE html>\n";
 	body << "<html>\n";
 	body << "<head>\n";
 	body << "    <meta charset=\"UTF-8\">\n";
 	body << "    <title>Redirect</title>\n";
+	// Meta refresh as fallback redirect mechanism
 	body << "    <meta http-equiv=\"refresh\" content=\"0; url=" << location << "\">\n";
 	body << "</head>\n";
 	body << "<body>\n";

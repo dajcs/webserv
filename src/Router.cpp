@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/13 17:48:08 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/14 17:46:19 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -200,18 +200,25 @@ Response Router::route(const Request& request, int serverPort)
 
 	// Step 4: Check for redirections
 	/*
-		Redirections tell the client to go elsewhere.
-		Example config:
-			location /old-page	{
-				return 301 /new-page;
-			}
+		HTTP Redirections in the Request Flow:
+		--------------------------------------
+		Redirections are checked EARLY in the routing process, before:
+		- Method validation (we redirect regardless of method)
+		- File resolution (the file doesn't need to exist)
+		- CGI detection (redirects bypass CGI entirely)
 
-		Response:
-			HTTP/1.1 301 Moved Permanently
-			Location: /new-page
+		The redirect response includes:
+		- Status line: HTTP/1.1 301 Moved Permanently
+		- Location header: The new URL
+		- Body: HTML with clickable link (fallback for old browsers)
 
-		301 = Permanent redirect (browsers cache this)
-		302 = Temporary redirect (browsers don't cache)
+		Example flow:
+			Request:  GET /old-page HTTP/1.1
+			Config:   location /old-page { return 301 /new-page; }
+			Response: HTTP/1.1 301 Moved Permanently
+					Location: /new-page
+
+		Browser automatically follows the redirect to /new-page
 	*/
 	if (!location->redirect_url.empty())
 	{
