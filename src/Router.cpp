@@ -6,20 +6,22 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/14 17:46:19 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/14 20:05:45 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Router.hpp"
-#include "Config.hpp"
 #include "Utils.hpp"
 #include "CGI.hpp"
-#include <sys/stat.h>
-#include <dirent.h>
+#include "Config.hpp"
+
 #include <fstream>
 #include <sstream>
 #include <ctime>
 #include <algorithm>
+
+#include <sys/stat.h>
+#include <dirent.h>
 #include <unistd.h>
 #include <fcntl.h>
 
@@ -218,7 +220,24 @@ Response Router::route(const Request& request, int serverPort)
 			Response: HTTP/1.1 301 Moved Permanently
 					Location: /new-page
 
-		Browser automatically follows the redirect to /new-page
+			Request: GET /old-page HTTP/1.1
+					↓
+				Router.route()
+					↓
+				findLocation("/old-page")
+					↓
+				location->redirect_url is not empty
+				Config:   location /old-page { return 301 /new-page; }
+					↓
+				Response::redirect(301, "/new-page")
+					↓
+			Response:
+				HTTP/1.1 301 Moved Permanently
+				Location: /new-page
+				Content-Type: text/html
+
+			Browser automatically follows the redirect to /new-page
+
 	*/
 	if (!location->redirect_url.empty())
 	{
@@ -1060,94 +1079,511 @@ Response Router::serveFile(const std::string& filepath)
 	2. Generate a directory listing if enabled
 	3. Return 403 Forbidden if directory listing is disabled
 
+	Directory Listing Features:
+	---------------------------
+	- Parent directory link (..) for navigation
+	- File names as clickable links
+	- File sizes in human-readable format
+	- File types (directory vs file indicator)
+	- Last modified timestamps
+	- Sorted alphabetically (directories first, then files)
+
+	Security Considerations:
+	------------------------
+	- Only list contents of directories within allowed root
+	- Don't expose hidden files (starting with .) by default
+	- Sanitize file names to prevent XSS in HTML output
+	- Directory listing disabled by default (autoindex off)
+
+	POSIX Functions Used:
+	---------------------
+	- opendir(): Open a directory stream
+	- readdir(): Read directory entries one by one
+	- closedir(): Close the directory stream
+	- stat(): Get file metadata (size, type, modification time)
+
 	Input:
 		dirpath:	Absolute path to the directory
 		location:	Locaction config (has index and autoindex settings)
+
+	Returns:
+		HTTP Response with either:
+		- 200 OK + file content (if serving index file)
+		- 200 OK + directory listing HTML (if autoindex enabled)
+		- 403 Forbidden (if no index and autoindex disabled)
 */
 Response Router::serveDirectory(const std::string& dirpath, const LocationConfig& location)
 {
-	// First try to serve index file
+	/*
+		Step 1: Try to serve index file
+		--------------------------------
+		Most directories have an index file (index.html, index.htm, etc.)
+		that should be served instead of a directory listing.
+
+		The index filename comes from the location configuration.
+		Default is typically "index.html".
+	*/
 	if (!location.index.empty())
 	{
+		// Build the full path to the index file
 		std::string indexPath = dirpath;
-		if (indexPath[indexPath.length() - 1] != '/')
+
+		// Ensure path ends with /
+		if (!indexPath.empty() && indexPath[indexPath.length() - 1] != '/')
 		{
 			indexPath += "/";
 		}
 		indexPath += location.index;
 
+		// Check if index file exists and is a regular file
 		struct stat indexStat;
 		if (stat(indexPath.c_str(), &indexStat) == 0 && S_ISREG(indexStat.st_mode))
 		{
+			// Index file exists! Serve it instead of directory listing
 			return serveFile(indexPath);
 		}
 	}
 
-	// location has no index file,
-	// check if directory listing is enabled
+	/*
+		Step 2: Check if directory listing is enabled
+		----------------------------------------------
+		Directory listing (autoindex) is a security-sensitive feature.
+		It exposes the structure of your filesystem to clients.
+
+		By default, autoindex should be OFF. Only enable it for
+		directories where you explicitly want to show contents
+		(e.g., a file download area, not your CGI scripts directory).
+	*/
 	if (!location.autoindex)
 	{
-		return errorResponse(403); // Forbidden - no directory listing
+		// Autoindex disabled - don't reveal directory contents
+		return errorResponse(403);  // Forbidden
 	}
 
-	// Generate directory listing
+	/*
+		Step 3: Open the directory
+		--------------------------
+		opendir() opens a directory stream for reading.
+		It returns a DIR* pointer that we use with readdir().
+
+		Possible errors:
+		- ENOENT: Directory doesn't exist
+		- EACCES: Permission denied
+		- ENOTDIR: Path is not a directory
+	*/
 	DIR* dir = opendir(dirpath.c_str());
 	if (!dir)
 	{
-		return errorResponse(500);
+		// Can't open directory - likely permission issue
+		if (errno == ENOENT)
+		{
+			return errorResponse(404);  // Not Found
+		}
+		return errorResponse(500);  // Internal Server Error
 	}
 
-	// Build HTML directory listing
-	std::stringstream html;
-	html << "<!DOCTYPE html>\n";
-	html << "<html>\n<head>\n";
-	html << "<title>Index of " << dirpath << "</title>\n";
-	html << "<style>\n";
-	html << "body { font-family: monospace; }\n";
-	html << "a { text-decoration: none; }\n";
-	html << "a:hover { text-decoration: underline; }\n";
-	html << "</style>\n";
-	html << "</head>\n<body>\n";
-	html << "<h1>Index of " << dirpath << "</h1>\n";
-	html << "<hr>\n<pre>\n";
+	/*
+		Step 4: Read directory entries into a list
+		------------------------------------------
+		We read all entries first, then sort them.
+		This provides a consistent, user-friendly display.
 
-	// Add parent directory link
-	html << "<a href=\"../\">..</a>\n";
+		We separate directories and files for easier navigation.
+	*/
+	std::vector<std::string> directories;
+	std::vector<std::string> files;
 
-	// List directory contents
 	struct dirent* entry;
 	while ((entry = readdir(dir)) != NULL)
 	{
 		std::string name = entry->d_name;
 
-		// Skip . and ..
-		if (name == "." || name == "..")
+		// Skip . (current directory)
+		// We handle .. separately for the parent link
+		if (name == ".")
 		{
 			continue;
 		}
 
-		// Check if it's a directory
-		std::string fullPath = dirpath + "/" + name;
-		struct stat entryStat;
-		if (stat(fullPath.c_str(), &entryStat) == 0 && S_ISDIR(entryStat.st_mode))
+		// Build full path to check if it's a directory
+		std::string fullPath = dirpath;
+		if (!fullPath.empty() && fullPath[fullPath.length() - 1] != '/')
 		{
-			name += "/";
+			fullPath += "/";
 		}
+		fullPath += name;
 
-		html << "<a href=\"" << name << "\">" << name << "</a>\n";
+		// Get file info using stat()
+		struct stat entryStat;
+		if (stat(fullPath.c_str(), &entryStat) == 0)
+		{
+			if (S_ISDIR(entryStat.st_mode))
+			{
+				// It's a directory - add trailing slash for clarity
+				directories.push_back(name + "/");
+			}
+			else if (S_ISREG(entryStat.st_mode))
+			{
+				// It's a regular file
+				files.push_back(name);
+			}
+			// Skip special files (sockets, devices, etc.)
+		}
 	}
 
 	closedir(dir);
 
-	html << "</pre>\n<hr>\n";
-	html << "</body>\n</html>\n";
+	/*
+		Step 5: Sort entries alphabetically
+		-----------------------------------
+		Sorting makes the listing easier to navigate.
+		Directories and files are sorted separately.
+	*/
+	std::sort(directories.begin(), directories.end());
+	std::sort(files.begin(), files.end());
 
+	/*
+		Step 6: Generate HTML directory listing
+		---------------------------------------
+		We build an HTML page that displays:
+		- Directory path as heading
+		- Parent directory link (..)
+		- All subdirectories (with trailing /)
+		- All files (with size and modification time)
+	*/
+	std::stringstream html;
+
+	// Determine the URI path for display and links
+	// We need to convert filesystem path to URL path
+	std::string displayPath = dirpath;
+
+	// HTML5 doctype and head
+	html << "<!DOCTYPE html>\n";
+	html << "<html lang=\"en\">\n";
+	html << "<head>\n";
+	html << "    <meta charset=\"UTF-8\">\n";
+	html << "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n";
+	html << "    <title>Index of " << escapeHtml(displayPath) << "</title>\n";
+
+	// Embedded CSS for styling
+	html << "    <style>\n";
+	html << "        body {\n";
+	html << "            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;\n";
+	html << "            max-width: 900px;\n";
+	html << "            margin: 0 auto;\n";
+	html << "            padding: 20px;\n";
+	html << "            background: #f5f5f5;\n";
+	html << "        }\n";
+	html << "        h1 {\n";
+	html << "            color: #333;\n";
+	html << "            border-bottom: 2px solid #4a90d9;\n";
+	html << "            padding-bottom: 10px;\n";
+	html << "        }\n";
+	html << "        table {\n";
+	html << "            width: 100%;\n";
+	html << "            border-collapse: collapse;\n";
+	html << "            background: white;\n";
+	html << "            box-shadow: 0 1px 3px rgba(0,0,0,0.1);\n";
+	html << "        }\n";
+	html << "        th, td {\n";
+	html << "            padding: 12px 15px;\n";
+	html << "            text-align: left;\n";
+	html << "            border-bottom: 1px solid #ddd;\n";
+	html << "        }\n";
+	html << "        th {\n";
+	html << "            background: #4a90d9;\n";
+	html << "            color: white;\n";
+	html << "        }\n";
+	html << "        tr:hover {\n";
+	html << "            background: #f0f7ff;\n";
+	html << "        }\n";
+	html << "        a {\n";
+	html << "            color: #4a90d9;\n";
+	html << "            text-decoration: none;\n";
+	html << "        }\n";
+	html << "        a:hover {\n";
+	html << "            text-decoration: underline;\n";
+	html << "        }\n";
+	html << "        .icon {\n";
+	html << "            margin-right: 8px;\n";
+	html << "        }\n";
+	html << "        .dir { color: #f39c12; }\n";
+	html << "        .file { color: #3498db; }\n";
+	html << "        .size { color: #666; font-size: 0.9em; }\n";
+	html << "        .date { color: #888; font-size: 0.85em; }\n";
+	html << "        footer {\n";
+	html << "            margin-top: 20px;\n";
+	html << "            text-align: center;\n";
+	html << "            color: #888;\n";
+	html << "            font-size: 0.85em;\n";
+	html << "        }\n";
+	html << "    </style>\n";
+	html << "</head>\n";
+	html << "<body>\n";
+
+	// Page heading
+	html << "    <h1>Index of " << escapeHtml(displayPath) << "</h1>\n";
+
+	// Directory listing table
+	html << "    <table>\n";
+	html << "        <thead>\n";
+	html << "            <tr>\n";
+	html << "                <th>Name</th>\n";
+	html << "                <th>Size</th>\n";
+	html << "                <th>Last Modified</th>\n";
+	html << "            </tr>\n";
+	html << "        </thead>\n";
+	html << "        <tbody>\n";
+
+	/*
+		Parent Directory Link (..)
+		--------------------------
+		Always include a link to go up one directory level.
+		This provides essential navigation capability.
+	*/
+	html << "            <tr>\n";
+	html << "                <td><span class=\"icon dir\">📁</span><a href=\"../\">..</a></td>\n";
+	html << "                <td class=\"size\">-</td>\n";
+	html << "                <td class=\"date\">-</td>\n";
+	html << "            </tr>\n";
+
+	/*
+		List Directories First
+		----------------------
+		Directories are listed before files for easier navigation.
+		Each directory entry has:
+		- Folder icon
+		- Name as clickable link (with trailing /)
+		- "-" for size (directories don't have a meaningful size)
+		- Modification time
+	*/
+	for (size_t i = 0; i < directories.size(); ++i)
+	{
+		std::string name = directories[i];
+
+		// Skip parent directory (we added it manually above)
+		if (name == "../")
+		{
+			continue;
+		}
+
+		// Get directory stats for modification time
+		std::string fullPath = dirpath;
+		if (!fullPath.empty() && fullPath[fullPath.length() - 1] != '/')
+		{
+			fullPath += "/";
+		}
+		// Remove trailing / from name for stat
+		std::string nameWithoutSlash = name.substr(0, name.length() - 1);
+		fullPath += nameWithoutSlash;
+
+		struct stat dirStat;
+		std::string modTime = "-";
+		if (stat(fullPath.c_str(), &dirStat) == 0)
+		{
+			modTime = formatTime(dirStat.st_mtime);
+		}
+
+		html << "            <tr>\n";
+		html << "                <td><span class=\"icon dir\">📁</span>";
+		html << "<a href=\"" << escapeHtml(name) << "\">" << escapeHtml(name) << "</a></td>\n";
+		html << "                <td class=\"size\">-</td>\n";
+		html << "                <td class=\"date\">" << modTime << "</td>\n";
+		html << "            </tr>\n";
+	}
+
+	/*
+		List Files
+		----------
+		Files are listed after directories.
+		Each file entry has:
+		- File icon
+		- Name as clickable link
+		- Size in human-readable format
+		- Modification time
+	*/
+	for (size_t i = 0; i < files.size(); ++i)
+	{
+		std::string name = files[i];
+
+		// Get file stats
+		std::string fullPath = dirpath;
+		if (!fullPath.empty() && fullPath[fullPath.length() - 1] != '/')
+		{
+			fullPath += "/";
+		}
+		fullPath += name;
+
+		struct stat fileStat;
+		std::string fileSize = "-";
+		std::string modTime = "-";
+
+		if (stat(fullPath.c_str(), &fileStat) == 0)
+		{
+			fileSize = formatFileSize(fileStat.st_size);
+			modTime = formatTime(fileStat.st_mtime);
+		}
+
+		html << "            <tr>\n";
+		html << "                <td><span class=\"icon file\">📄</span>";
+		html << "<a href=\"" << escapeHtml(name) << "\">" << escapeHtml(name) << "</a></td>\n";
+		html << "                <td class=\"size\">" << fileSize << "</td>\n";
+		html << "                <td class=\"date\">" << modTime << "</td>\n";
+		html << "            </tr>\n";
+	}
+
+	html << "        </tbody>\n";
+	html << "    </table>\n";
+
+	// Footer with server info
+	html << "    <footer>\n";
+	html << "        <hr>\n";
+	html << "        <p>webserv/1.0</p>\n";
+	html << "    </footer>\n";
+	html << "</body>\n";
+	html << "</html>\n";
+
+	/*
+		Step 7: Build HTTP Response
+		---------------------------
+		Return a 200 OK response with the generated HTML.
+	*/
 	Response response;
 	response.setStatus(200, "OK");
-	response.setContentType("text/html");
+	response.setContentType("text/html; charset=UTF-8");
 	response.setBody(html.str());
+	response.addStandardHeaders();
 
 	return response;
+}
+
+
+/*
+	escapeHtml() - Escape special HTML characters
+
+	Prevents XSS (Cross-Site Scripting) attacks by converting
+	special HTML characters to their entity equivalents.
+
+	Characters escaped:
+	- & -> &amp;   (must be first!)
+	- < -> &lt;
+	- > -> &gt;
+	- " -> &quot;
+	- ' -> &#39;
+
+	Why this matters:
+	-----------------
+	If a filename contains "<script>alert('xss')</script>",
+	without escaping, this would execute JavaScript in the browser!
+
+	Parameters:
+		str: The raw string to escape
+
+	Returns:
+		HTML-safe string
+*/
+std::string Router::escapeHtml(const std::string& str)
+{
+	std::string result;
+	result.reserve(str.length() * 1.1);  // Reserve slightly more space
+
+	for (size_t i = 0; i < str.length(); ++i)
+	{
+		char c = str[i];
+		switch (c)
+		{
+			case '&':
+				result += "&amp;";
+				break;
+			case '<':
+				result += "&lt;";
+				break;
+			case '>':
+				result += "&gt;";
+				break;
+			case '"':
+				result += "&quot;";
+				break;
+			case '\'':
+				result += "&#39;";
+				break;
+			default:
+				result += c;
+				break;
+		}
+	}
+
+	return result;
+}
+
+
+/*
+	formatFileSize() - Format file size in human-readable form
+
+	Converts bytes to appropriate unit (B, KB, MB, GB, TB).
+	Uses binary units (1 KB = 1024 bytes) as is standard for file sizes.
+
+	Examples:
+		512        -> "512 B"
+		1536       -> "1.5 KB"
+		1048576    -> "1.0 MB"
+		1610612736 -> "1.5 GB"
+
+	Parameters:
+		size: File size in bytes
+
+	Returns:
+		Human-readable size string
+*/
+std::string Router::formatFileSize(off_t size)
+{
+	std::stringstream ss;
+
+	if (size < 1024)
+	{
+		ss << size << " B";
+	}
+	else if (size < 1024 * 1024)
+	{
+		ss << std::fixed << std::setprecision(1) << (size / 1024.0) << " KB";
+	}
+	else if (size < 1024 * 1024 * 1024)
+	{
+		ss << std::fixed << std::setprecision(1) << (size / (1024.0 * 1024.0)) << " MB";
+	}
+	else
+	{
+		ss << std::fixed << std::setprecision(1) << (size / (1024.0 * 1024.0 * 1024.0)) << " GB";
+	}
+
+	return ss.str();
+}
+
+
+/*
+	formatTime() - Format timestamp for display
+
+	Converts Unix timestamp to human-readable date/time string.
+	Uses format: "YYYY-MM-DD HH:MM" for consistent width.
+
+	Parameters:
+		timestamp: Unix timestamp (seconds since epoch)
+
+	Returns:
+		Formatted date/time string
+*/
+std::string Router::formatTime(time_t timestamp)
+{
+	struct tm* timeinfo = localtime(&timestamp);
+	if (!timeinfo)
+	{
+		return "-";
+	}
+
+	char buffer[32];
+	strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M", timeinfo);
+
+	return std::string(buffer);
 }
 
 
