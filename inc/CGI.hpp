@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:40 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/12 21:57:07 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/14 11:58:53 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -532,6 +532,30 @@ private:
 	*/
 	static bool setNonBlocking(int fd);
 
+	/*
+		cleanupChild() - Terminate and reap a child process
+
+		When CGI execution fails or times out, we need to:
+		1. Send SIGTERM to ask the child to exit gracefully
+		2. Wait briefly for voluntary termination
+		3. Send SIGKILL if still running (forceful termination)
+		4. Call waitpid() to reap the zombie process
+
+		This prevents zombie processes from accumulating.
+	*/
+	void cleanupChild(pid_t pid);
+
+	/*
+		closePipes() - Safely close pipe file descriptors
+
+		Ensures all pipe ends are closed to prevent:
+		- File descriptor leaks
+		- Blocked reads (if write end not closed)
+		- Blocked writes (if read end not closed)
+	*/
+	void closePipes(int* stdinPipe, int* stdoutPipe);
+
+
 
 	// ===========================
 	//  Member Variables
@@ -554,29 +578,6 @@ private:
 	bool _ready;                      // True if setup() succeeded
 	int _errorCode;                   // HTTP error code (0 = no error)
 	std::string _errorMessage;        // Human-readable error description
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 };

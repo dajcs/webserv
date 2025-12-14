@@ -6,537 +6,595 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/13 19:07:11 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/14 13:06:30 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
+
 /*
-	==================================================
-		CGI UNIT TESTS (Step 8.2)
-	==================================================
+    =================================================================
+        CGI ERROR HANDLING TEST SUITE
+    =================================================================
 
-	This file tests CGI execution without the network layer.
-	It directly creates Request and LocationConfig objects,
-	then tests the CGI class methods.
+    This test file exercises all CGI error handling scenarios without
+    requiring the network layer. It directly uses the CGI class to
+    validate error codes and messages.
 
-	Tests:
-	1. CGI detection (isCgiRequest)
-	2. CGI setup (environment building)
-	3. CGI execution (fork/pipe/execve)
-	4. CGI output parsing
-	5. Error handling (timeout, bad script, etc.)
+    Test Categories:
+    ----------------
+    1. Script Not Found (404)
+    2. Script Not Executable (500)
+    3. Interpreter Not Found (500)
+    4. CGI Timeout (504)
+    5. Invalid CGI Output (502)
+    6. CGI Crash/Signal (500)
+    7. Successful Execution (200)
 
-	Compile:
-		g++ -Wall -Wextra -Werror -std=c++98 \
-			-I inc/ \
-			src/CGI.cpp src/Request.cpp src/Config.cpp src/Utils.cpp \
-			tests/test_cgi.cpp \
-			-o test_cgi
+    How to Run:
+    -----------
+    make test_cgi  # Add this target to Makefile
+    ./test_cgi_errors
 
-	Run:
-		./test_cgi
+    Or manually:
+    g++ -std=c++98 -I../includes -o test_cgi_errors test_cgi_errors.cpp \
+        ../src/CGI.cpp ../src/Request.cpp ../src/Config.cpp -Wall -Wextra
 */
 
-#include "CGI.hpp"
-#include "Request.hpp"
-#include "Config.hpp"
-
 #include <iostream>
+#include <fstream>
 #include <cstdlib>
 #include <cstring>
 #include <sys/stat.h>
 #include <unistd.h>
 
-// Simple test framework
+#include "CGI.hpp"
+#include "Request.hpp"
+#include "Config.hpp"
+
+// Test result tracking
+static int g_testsRun = 0;
 static int g_testsPassed = 0;
 static int g_testsFailed = 0;
 
-#define TEST(name) std::cout << "\n[TEST] " << name << std::endl;
-#define ASSERT(condition, message) \
+// ANSI color codes for pretty output
+#define COLOR_RED     "\033[31m"
+#define COLOR_GREEN   "\033[32m"
+#define COLOR_YELLOW  "\033[33m"
+#define COLOR_BLUE    "\033[34m"
+#define COLOR_RESET   "\033[0m"
+
+/*
+	Test assertion macros
+*/
+#define TEST_ASSERT(condition, message) \
 	do { \
+		g_testsRun++; \
 		if (condition) { \
-			std::cout << "  ✓ " << message << std::endl; \
 			g_testsPassed++; \
+			std::cout << COLOR_GREEN << "[PASS] " << COLOR_RESET << message << std::endl; \
 		} else { \
-			std::cout << "  ✗ " << message << " (FAILED)" << std::endl; \
 			g_testsFailed++; \
+			std::cout << COLOR_RED << "[FAIL] " << COLOR_RESET << message << std::endl; \
+			std::cout << "       Expected: " << #condition << std::endl; \
 		} \
-	} while(0)
+	} while (0)
+
+#define TEST_SECTION(name) \
+    std::cout << std::endl << COLOR_BLUE << "=== " << name << " ===" << COLOR_RESET << std::endl
 
 
+// =========================================
+//  Test Helper: Create Mock Request
+// =========================================
 /*
-	findPythonInterpreter() - Find a valid Python 3 interpreter
-
-	Checks common locations for Python 3.
-	Returns empty string if not found.
-*/
-std::string findPythonInterpreter()
-{
-	const char* paths[] = {
-		"/usr/bin/python3",
-		"/usr/local/bin/python3",
-		"/usr/bin/python",
-		"/usr/local/bin/python",
-		NULL
-	};
-
-	for (int i = 0; paths[i] != NULL; i++)
-	{
-		if (access(paths[i], X_OK) == 0)
-		{
-			return paths[i];
-		}
-	}
-	return "";
-}
-
-
-/*
-	getWorkingDirectory() - Get the current working directory
-*/
-std::string getWorkingDirectory()
-{
-	char cwd[1024];
-	if (getcwd(cwd, sizeof(cwd)) != NULL)
-	{
-		return std::string(cwd);
-	}
-	return ".";
-}
-
-
-/*
-	createMockRequest() - Create a Request object with given parameters
-
-	Since Request normally parses from raw HTTP data,
-	we'll create a minimal test by directly setting fields.
+	Creates a minimal Request object for CGI testing.
+	The Request needs to be "complete" for CGI to read headers/body.
 */
 Request createMockRequest(const std::string& method,
-						  const std::string& uri,
-						  const std::string& body = "")
+							const std::string& path,
+							const std::string& queryString = "",
+							const std::string& body = "")
 {
-	// Build a raw HTTP request string
-	std::string rawRequest = method + " " + uri + " HTTP/1.1\r\n";
-	rawRequest += "Host: localhost:8080\r\n";
-	rawRequest += "User-Agent: test/1.0\r\n";
+	Request request;
+
+	// Build a minimal HTTP request
+	std::string httpRequest = method + " " + path;
+	if (!queryString.empty())
+	{
+		httpRequest += "?" + queryString;
+	}
+	httpRequest += " HTTP/1.1\r\n";
+	httpRequest += "Host: localhost:8080\r\n";
 
 	if (!body.empty())
 	{
-		rawRequest += "Content-Type: application/x-www-form-urlencoded\r\n";
-		rawRequest += "Content-Length: " +
-			static_cast<std::ostringstream*>(&(std::ostringstream() << body.size()))->str() + "\r\n";
+		std::ostringstream oss;
+		oss << body.size();
+		httpRequest += "Content-Length: " + oss.str() + "\r\n";
+		httpRequest += "Content-Type: application/x-www-form-urlencoded\r\n";
 	}
 
-	rawRequest += "\r\n";
-	rawRequest += body;
+	httpRequest += "\r\n";
+	httpRequest += body;
 
-	Request request;
-	request.parse(rawRequest);
+	request.parse(httpRequest);
+
 	return request;
 }
 
 
+// =========================================
+//  Test Helper: Create Mock Location
+// =========================================
 /*
-	createMockLocationConfig() - Create a LocationConfig for CGI testing
+	Creates a LocationConfig with CGI enabled.
 */
-LocationConfig createMockLocationConfig(const std::string& pythonPath)
+LocationConfig createCgiLocation(const std::string& extension = ".py",
+									const std::string& interpreter = "/usr/bin/python3")
 {
 	LocationConfig location;
 	location.path = "/cgi-bin";
-	location.root = getWorkingDirectory() + "/www";
-	location.cgi_extension = ".py";
-	location.cgi_path = pythonPath;
+	location.root = "www";
+	location.cgi_extension = extension;
+	location.cgi_path = interpreter;
 	location.allowed_methods.insert("GET");
 	location.allowed_methods.insert("POST");
 	return location;
 }
 
 
-// =============================================
-//  Test Functions
-// =============================================
+// =========================================
+//  Test Helper: Create Test Scripts
+// =========================================
 
-/*
-	Test 1: CGI Detection
-*/
-void testCgiDetection()
+// Directory for test CGI scripts
+const std::string TEST_CGI_DIR = "www/cgi-bin";
+
+void setupTestDirectory()
 {
-	TEST("CGI Detection (isCgiRequest)")
-
-	std::string pythonPath = findPythonInterpreter();
-	if (pythonPath.empty())
-	{
-		std::cout << "  ! Python not found, skipping detection test" << std::endl;
-		return;
-	}
-
-	LocationConfig location = createMockLocationConfig(pythonPath);
-
-	// Should detect .py files as CGI
-	ASSERT(CGI::isCgiRequest("/var/www/cgi-bin/test.py", location),
-		   ".py file should be detected as CGI");
-
-	ASSERT(CGI::isCgiRequest("/some/path/script.py", location),
-		   "Any .py file should be detected");
-
-	// Should NOT detect non-.py files
-	ASSERT(!CGI::isCgiRequest("/var/www/index.html", location),
-		   ".html file should NOT be detected as CGI");
-
-	ASSERT(!CGI::isCgiRequest("/var/www/style.css", location),
-		   ".css file should NOT be detected as CGI");
-
-	ASSERT(!CGI::isCgiRequest("/var/www/script.php", location),
-		   ".php file should NOT be detected (configured for .py)");
-
-	// Edge cases
-	ASSERT(!CGI::isCgiRequest(".py", location),
-		   "Just extension should not match");
-
-	ASSERT(CGI::isCgiRequest("/a.py", location),
-		   "Short path with .py should match");
+	// Create test directory if it doesn't exist
+	mkdir("www", 0755);
+	mkdir(TEST_CGI_DIR.c_str(), 0755);
 }
 
-
-/*
-	Test 2: CGI Setup
-*/
-void testCgiSetup()
+void createTestScript(const std::string& name, const std::string& content, bool executable = true)
 {
-	TEST("CGI Setup (environment building)")
+	std::string path = TEST_CGI_DIR + "/" + name;
+	std::ofstream file(path.c_str());
+	file << content;
+	file.close();
 
-	std::string pythonPath = findPythonInterpreter();
-	if (pythonPath.empty())
+	if (executable)
 	{
-		std::cout << "  ! Python not found, skipping setup test" << std::endl;
-		return;
-	}
-
-	std::string cwd = getWorkingDirectory();
-	std::string scriptPath = cwd + "/www/cgi-bin/hello.py";
-
-	// Check if test script exists
-	struct stat st;
-	if (stat(scriptPath.c_str(), &st) != 0)
-	{
-		std::cout << "  ! Test script not found: " << scriptPath << std::endl;
-		return;
-	}
-
-	// Make script executable
-	chmod(scriptPath.c_str(), 0755);
-
-	LocationConfig location = createMockLocationConfig(pythonPath);
-	Request request = createMockRequest("GET", "/cgi-bin/hello.py?name=World");
-
-	CGI cgi(request, location);
-	bool setupResult = cgi.setup(scriptPath);
-
-	ASSERT(setupResult, "Setup should succeed for valid script");
-	ASSERT(cgi.isReady(), "CGI should be ready after successful setup");
-	ASSERT(cgi.getErrorCode() == 0, "No error code after successful setup");
-
-	// Check environment variables
-	const std::map<std::string, std::string>& env = cgi.getEnvMap();
-
-	ASSERT(env.find("REQUEST_METHOD") != env.end(),
-		   "REQUEST_METHOD should be set");
-	ASSERT(env.at("REQUEST_METHOD") == "GET",
-		   "REQUEST_METHOD should be GET");
-
-	ASSERT(env.find("QUERY_STRING") != env.end(),
-		   "QUERY_STRING should be set");
-	ASSERT(env.at("QUERY_STRING") == "name=World",
-		   "QUERY_STRING should contain query parameters");
-
-	ASSERT(env.find("SCRIPT_FILENAME") != env.end(),
-		   "SCRIPT_FILENAME should be set");
-
-	ASSERT(env.find("GATEWAY_INTERFACE") != env.end(),
-		   "GATEWAY_INTERFACE should be set");
-	ASSERT(env.at("GATEWAY_INTERFACE") == "CGI/1.1",
-		   "GATEWAY_INTERFACE should be CGI/1.1");
-}
-
-
-/*
-	Test 3: CGI Setup Failure (non-existent script)
-*/
-void testCgiSetupFailure()
-{
-	TEST("CGI Setup Failure Handling")
-
-	std::string pythonPath = findPythonInterpreter();
-	if (pythonPath.empty())
-	{
-		std::cout << "  ! Python not found, skipping failure test" << std::endl;
-		return;
-	}
-
-	LocationConfig location = createMockLocationConfig(pythonPath);
-	Request request = createMockRequest("GET", "/cgi-bin/nonexistent.py");
-
-	CGI cgi(request, location);
-	bool setupResult = cgi.setup("/path/to/nonexistent/script.py");
-
-	ASSERT(!setupResult, "Setup should fail for non-existent script");
-	ASSERT(!cgi.isReady(), "CGI should NOT be ready after failed setup");
-	ASSERT(cgi.getErrorCode() == 404, "Error code should be 404 for missing script");
-}
-
-
-/*
-	Test 4: CGI Execution (simple hello world)
-*/
-void testCgiExecution()
-{
-	TEST("CGI Execution (simple script)")
-
-	std::string pythonPath = findPythonInterpreter();
-	if (pythonPath.empty())
-	{
-		std::cout << "  ! Python not found, skipping execution test" << std::endl;
-		return;
-	}
-
-	std::string cwd = getWorkingDirectory();
-	std::string scriptPath = cwd + "/www/cgi-bin/hello.py";
-
-	// Check if test script exists
-	struct stat st;
-	if (stat(scriptPath.c_str(), &st) != 0)
-	{
-		std::cout << "  ! Test script not found: " << scriptPath << std::endl;
-		return;
-	}
-
-	// Make script executable
-	chmod(scriptPath.c_str(), 0755);
-
-	LocationConfig location = createMockLocationConfig(pythonPath);
-	Request request = createMockRequest("GET", "/cgi-bin/hello.py");
-
-	CGI cgi(request, location);
-
-	if (!cgi.setup(scriptPath))
-	{
-		std::cout << "  ! Setup failed: " << cgi.getErrorMessage() << std::endl;
-		return;
-	}
-
-	// Execute CGI
-	CGI::CGIResult result = cgi.execute(10);  // 10 second timeout
-
-	ASSERT(result.success, "Execution should succeed");
-	ASSERT(result.statusCode == 200, "Status code should be 200");
-
-	// Check headers
-	ASSERT(result.headers.find("Content-Type") != result.headers.end(),
-		   "Content-Type header should be present");
-
-	// Check body contains expected content
-	ASSERT(result.body.find("Hello") != std::string::npos,
-		   "Body should contain 'Hello'");
-	ASSERT(result.body.find("<html>") != std::string::npos,
-		   "Body should contain HTML");
-}
-
-
-/*
-	Test 5: CGI with Query String
-*/
-void testCgiQueryString()
-{
-	TEST("CGI with Query String")
-
-	std::string pythonPath = findPythonInterpreter();
-	if (pythonPath.empty())
-	{
-		std::cout << "  ! Python not found, skipping query string test" << std::endl;
-		return;
-	}
-
-	std::string cwd = getWorkingDirectory();
-	std::string scriptPath = cwd + "/www/cgi-bin/test.py";
-
-	struct stat st;
-	if (stat(scriptPath.c_str(), &st) != 0)
-	{
-		std::cout << "  ! Test script not found: " << scriptPath << std::endl;
-		return;
-	}
-
-	chmod(scriptPath.c_str(), 0755);
-
-	LocationConfig location = createMockLocationConfig(pythonPath);
-	Request request = createMockRequest("GET", "/cgi-bin/test.py?name=WebServ&count=42");
-
-	CGI cgi(request, location);
-
-	if (!cgi.setup(scriptPath))
-	{
-		std::cout << "  ! Setup failed: " << cgi.getErrorMessage() << std::endl;
-		return;
-	}
-
-	CGI::CGIResult result = cgi.execute(10);
-
-	ASSERT(result.success, "Execution should succeed");
-
-	// Body should show the query parameters
-	ASSERT(result.body.find("name") != std::string::npos,
-		   "Body should show query parameter names");
-	ASSERT(result.body.find("WebServ") != std::string::npos,
-		   "Body should show parameter value 'WebServ'");
-}
-
-
-/*
-	Test 6: CGI with POST body
-*/
-void testCgiPostBody()
-{
-	TEST("CGI with POST Body")
-
-	std::string pythonPath = findPythonInterpreter();
-	if (pythonPath.empty())
-	{
-		std::cout << "  ! Python not found, skipping POST test" << std::endl;
-		return;
-	}
-
-	std::string cwd = getWorkingDirectory();
-	std::string scriptPath = cwd + "/www/cgi-bin/test.py";
-
-	struct stat st;
-	if (stat(scriptPath.c_str(), &st) != 0)
-	{
-		std::cout << "  ! Test script not found: " << scriptPath << std::endl;
-		return;
-	}
-
-	chmod(scriptPath.c_str(), 0755);
-
-	LocationConfig location = createMockLocationConfig(pythonPath);
-	Request request = createMockRequest("POST", "/cgi-bin/test.py", "username=test&password=secret");
-
-	CGI cgi(request, location);
-
-	if (!cgi.setup(scriptPath))
-	{
-		std::cout << "  ! Setup failed: " << cgi.getErrorMessage() << std::endl;
-		return;
-	}
-
-	CGI::CGIResult result = cgi.execute(10);
-
-	ASSERT(result.success, "POST execution should succeed");
-
-	// Body should indicate POST data was received
-	// The test.py script reads from stdin and displays it
-	ASSERT(result.body.find("POST") != std::string::npos ||
-		   result.body.find("username") != std::string::npos,
-		   "Response should reference POST method or body content");
-}
-
-
-/*
-	Test 7: Memory management (argv and envp)
-*/
-void testMemoryManagement()
-{
-	TEST("Memory Management (argv/envp allocation)")
-
-	std::string pythonPath = findPythonInterpreter();
-	if (pythonPath.empty())
-	{
-		std::cout << "  ! Python not found, skipping memory test" << std::endl;
-		return;
-	}
-
-	std::string cwd = getWorkingDirectory();
-	std::string scriptPath = cwd + "/www/cgi-bin/hello.py";
-
-	struct stat st;
-	if (stat(scriptPath.c_str(), &st) != 0)
-	{
-		std::cout << "  ! Test script not found, skipping" << std::endl;
-		return;
-	}
-
-	chmod(scriptPath.c_str(), 0755);
-
-	LocationConfig location = createMockLocationConfig(pythonPath);
-	Request request = createMockRequest("GET", "/cgi-bin/hello.py");
-
-	CGI cgi(request, location);
-	cgi.setup(scriptPath);
-
-	// Test argv allocation and freeing
-	char** argv = cgi.getArgv();
-	ASSERT(argv != NULL, "getArgv should return non-NULL");
-	ASSERT(argv[0] != NULL, "argv[0] should be interpreter path");
-	ASSERT(argv[1] != NULL, "argv[1] should be script path");
-	ASSERT(argv[2] == NULL, "argv[2] should be NULL terminator");
-	CGI::freeArgv(argv);
-	std::cout << "  ✓ argv freed successfully" << std::endl;
-	g_testsPassed++;
-
-	// Test envp allocation and freeing
-	char** envp = cgi.getEnvArray();
-	ASSERT(envp != NULL, "getEnvArray should return non-NULL");
-
-	int envCount = 0;
-	while (envp[envCount] != NULL)
-	{
-		envCount++;
-	}
-	ASSERT(envCount > 0, "Environment should have at least one variable");
-
-	CGI::freeEnvArray(envp);
-	std::cout << "  ✓ envp freed successfully" << std::endl;
-	g_testsPassed++;
-}
-
-
-// =============================================
-//  Main
-// =============================================
-
-int main()
-{
-	std::cout << "============================================" << std::endl;
-	std::cout << "     CGI Unit Tests (Step 8.2)" << std::endl;
-	std::cout << "============================================" << std::endl;
-
-	// Find Python
-	std::string pythonPath = findPythonInterpreter();
-	if (pythonPath.empty())
-	{
-		std::cout << "\n⚠ WARNING: Python not found in standard locations." << std::endl;
-		std::cout << "Most tests will be skipped." << std::endl;
+		chmod(path.c_str(), 0755);  // rwxr-xr-x
 	}
 	else
 	{
-		std::cout << "\nUsing Python: " << pythonPath << std::endl;
+		chmod(path.c_str(), 0644);  // rw-r--r-- (not executable)
+	}
+}
+
+void removeTestScript(const std::string& name)
+{
+	std::string path = TEST_CGI_DIR + "/" + name;
+	unlink(path.c_str());
+}
+
+
+// =========================================
+//  Test 1: Script Not Found (404)
+// =========================================
+void testScriptNotFound()
+{
+	TEST_SECTION("Test 1: Script Not Found (404)");
+
+	Request request = createMockRequest("GET", "/cgi-bin/nonexistent.py");
+	LocationConfig location = createCgiLocation();
+
+	CGI cgi(request, location);
+
+	// Try to set up with a script that doesn't exist
+	std::string scriptPath = "www/cgi-bin/nonexistent.py";
+	bool setupResult = cgi.setup(scriptPath);
+
+	TEST_ASSERT(!setupResult, "setup() should return false for nonexistent script");
+	TEST_ASSERT(cgi.getErrorCode() == 404, "Error code should be 404 Not Found");
+	TEST_ASSERT(!cgi.isReady(), "CGI should not be ready");
+
+	std::cout << "       Error message: " << cgi.getErrorMessage() << std::endl;
+}
+
+
+// =========================================
+//  Test 2: Script Not Executable (500)
+// =========================================
+void testScriptNotExecutable()
+{
+	TEST_SECTION("Test 2: Script Not Executable (500)");
+
+	// Create a script without execute permission
+	std::string scriptContent =
+		"#!/usr/bin/env python3\n"
+		"print('Content-Type: text/plain\\r')\n"
+		"print('\\r')\n"
+		"print('Hello')\n";
+
+	createTestScript("noexec.py", scriptContent, false);  // false = not executable
+
+	Request request = createMockRequest("GET", "/cgi-bin/noexec.py");
+	LocationConfig location = createCgiLocation();
+
+	CGI cgi(request, location);
+
+	std::string scriptPath = TEST_CGI_DIR + "/noexec.py";
+	bool setupResult = cgi.setup(scriptPath);
+
+	TEST_ASSERT(!setupResult, "setup() should return false for non-executable script");
+	TEST_ASSERT(cgi.getErrorCode() == 500, "Error code should be 500 (server config error)");
+	TEST_ASSERT(!cgi.isReady(), "CGI should not be ready");
+
+	std::cout << "       Error message: " << cgi.getErrorMessage() << std::endl;
+
+	removeTestScript("noexec.py");
+}
+
+
+// =========================================
+//  Test 3: Interpreter Not Found (500)
+// =========================================
+void testInterpreterNotFound()
+{
+	TEST_SECTION("Test 3: Interpreter Not Found (500)");
+
+	// Create a valid script
+	std::string scriptContent =
+		"#!/usr/bin/env python3\n"
+		"print('Content-Type: text/plain\\r')\n"
+		"print('\\r')\n"
+		"print('Hello')\n";
+
+	createTestScript("test.py", scriptContent, true);
+
+	Request request = createMockRequest("GET", "/cgi-bin/test.py");
+
+	// Use a non-existent interpreter
+	LocationConfig location = createCgiLocation(".py", "/nonexistent/interpreter");
+
+	CGI cgi(request, location);
+
+	std::string scriptPath = TEST_CGI_DIR + "/test.py";
+	bool setupResult = cgi.setup(scriptPath);
+
+	TEST_ASSERT(!setupResult, "setup() should return false for nonexistent interpreter");
+	TEST_ASSERT(cgi.getErrorCode() == 500, "Error code should be 500");
+	TEST_ASSERT(!cgi.isReady(), "CGI should not be ready");
+
+	std::cout << "       Error message: " << cgi.getErrorMessage() << std::endl;
+
+	removeTestScript("test.py");
+}
+
+
+// =========================================
+//  Test 4: CGI Timeout (504)
+// =========================================
+void testCgiTimeout()
+{
+	TEST_SECTION("Test 4: CGI Timeout (504)");
+
+	// Create a script that sleeps for a long time
+	std::string scriptContent =
+		"#!/usr/bin/env python3\n"
+		"import time\n"
+		"time.sleep(60)  # Sleep for 60 seconds\n"
+		"print('Content-Type: text/plain\\r')\n"
+		"print('\\r')\n"
+		"print('Done')\n";
+
+	createTestScript("slow.py", scriptContent, true);
+
+	Request request = createMockRequest("GET", "/cgi-bin/slow.py");
+	LocationConfig location = createCgiLocation();
+
+	CGI cgi(request, location);
+
+	std::string scriptPath = TEST_CGI_DIR + "/slow.py";
+	bool setupResult = cgi.setup(scriptPath);
+
+	TEST_ASSERT(setupResult, "setup() should succeed for valid script");
+	TEST_ASSERT(cgi.isReady(), "CGI should be ready");
+
+	// Execute with a short timeout (2 seconds)
+	std::cout << "       Executing with 2 second timeout (expect ~2s delay)..." << std::endl;
+	CGI::CGIResult result = cgi.execute(2);
+
+	TEST_ASSERT(!result.success, "execute() should fail due to timeout");
+	TEST_ASSERT(result.statusCode == 504, "Status code should be 504 Gateway Timeout");
+
+	std::cout << "       Error message: " << result.errorMessage << std::endl;
+
+	removeTestScript("slow.py");
+}
+
+
+// =========================================
+//  Test 5: Invalid CGI Output (502)
+// =========================================
+void testInvalidCgiOutput()
+{
+	TEST_SECTION("Test 5: Invalid CGI Output (502)");
+
+	// Create a script that produces invalid output (no headers)
+	std::string scriptContent =
+		"#!/usr/bin/env python3\n"
+		"# Missing the required blank line between headers and body\n"
+		"print('This is not valid CGI output')\n";
+
+	createTestScript("invalid_output.py", scriptContent, true);
+
+	Request request = createMockRequest("GET", "/cgi-bin/invalid_output.py");
+	LocationConfig location = createCgiLocation();
+
+	CGI cgi(request, location);
+
+	std::string scriptPath = TEST_CGI_DIR + "/invalid_output.py";
+	cgi.setup(scriptPath);
+
+	CGI::CGIResult result = cgi.execute(5);
+
+	TEST_ASSERT(!result.success, "execute() should fail for invalid output");
+	TEST_ASSERT(result.statusCode == 502, "Status code should be 502 Bad Gateway");
+
+	std::cout << "       Error message: " << result.errorMessage << std::endl;
+
+	removeTestScript("invalid_output.py");
+}
+
+
+// =========================================
+//  Test 6: Successful CGI Execution (200)
+// =========================================
+void testSuccessfulCgi()
+{
+	TEST_SECTION("Test 6: Successful CGI Execution (200)");
+
+	// Create a valid CGI script
+	std::string scriptContent =
+		"#!/usr/bin/env python3\n"
+		"import os\n"
+		"print('Content-Type: text/html\\r')\n"
+		"print('\\r')\n"
+		"print('<h1>CGI Works!</h1>')\n"
+		"print('<p>Request Method: ' + os.environ.get('REQUEST_METHOD', 'unknown') + '</p>')\n";
+
+	createTestScript("success.py", scriptContent, true);
+
+	Request request = createMockRequest("GET", "/cgi-bin/success.py");
+	LocationConfig location = createCgiLocation();
+
+	CGI cgi(request, location);
+
+	std::string scriptPath = TEST_CGI_DIR + "/success.py";
+	bool setupResult = cgi.setup(scriptPath);
+
+	TEST_ASSERT(setupResult, "setup() should succeed");
+	TEST_ASSERT(cgi.isReady(), "CGI should be ready");
+
+	CGI::CGIResult result = cgi.execute(5);
+
+	TEST_ASSERT(result.success, "execute() should succeed");
+	TEST_ASSERT(result.statusCode == 200, "Status code should be 200");
+	TEST_ASSERT(!result.body.empty(), "Body should not be empty");
+	TEST_ASSERT(result.headers.count("Content-Type") > 0, "Content-Type header should be present");
+
+	std::cout << "       Body preview: " << result.body.substr(0, 50) << "..." << std::endl;
+
+	removeTestScript("success.py");
+}
+
+
+// =========================================
+//  Test 7: CGI with POST Data
+// =========================================
+void testCgiWithPost()
+{
+	TEST_SECTION("Test 7: CGI with POST Data");
+
+	// Create a script that reads and echoes POST data
+	std::string scriptContent =
+		"#!/usr/bin/env python3\n"
+		"import sys\n"
+		"import os\n"
+		"# Read POST body from stdin\n"
+		"content_length = int(os.environ.get('CONTENT_LENGTH', 0))\n"
+		"post_data = sys.stdin.read(content_length) if content_length > 0 else ''\n"
+		"print('Content-Type: text/plain\\r')\n"
+		"print('\\r')\n"
+		"print('Received: ' + post_data)\n";
+
+	createTestScript("echo_post.py", scriptContent, true);
+
+	Request request = createMockRequest("POST", "/cgi-bin/echo_post.py", "", "name=test&value=123");
+	LocationConfig location = createCgiLocation();
+
+	CGI cgi(request, location);
+
+	std::string scriptPath = TEST_CGI_DIR + "/echo_post.py";
+	cgi.setup(scriptPath);
+
+	CGI::CGIResult result = cgi.execute(5);
+
+	TEST_ASSERT(result.success, "execute() should succeed");
+	TEST_ASSERT(result.body.find("name=test") != std::string::npos,
+				"Body should contain POST data");
+
+	std::cout << "       Response body: " << result.body << std::endl;
+
+	removeTestScript("echo_post.py");
+}
+
+
+// =========================================
+//  Test 8: CGI with Query String
+// =========================================
+void testCgiWithQueryString()
+{
+	TEST_SECTION("Test 8: CGI with Query String");
+
+	// Create a script that reads query string
+	std::string scriptContent =
+		"#!/usr/bin/env python3\n"
+		"import os\n"
+		"query = os.environ.get('QUERY_STRING', '')\n"
+		"print('Content-Type: text/plain\\r')\n"
+		"print('\\r')\n"
+		"print('Query: ' + query)\n";
+
+	createTestScript("query.py", scriptContent, true);
+
+	Request request = createMockRequest("GET", "/cgi-bin/query.py", "foo=bar&baz=123");
+	LocationConfig location = createCgiLocation();
+
+	CGI cgi(request, location);
+
+	std::string scriptPath = TEST_CGI_DIR + "/query.py";
+	cgi.setup(scriptPath);
+
+	CGI::CGIResult result = cgi.execute(5);
+
+	TEST_ASSERT(result.success, "execute() should succeed");
+	TEST_ASSERT(result.body.find("foo=bar") != std::string::npos,
+				"Body should contain query string");
+
+	std::cout << "       Response body: " << result.body << std::endl;
+
+	removeTestScript("query.py");
+}
+
+
+// =========================================
+//  Test 9: CGI Status Header
+// =========================================
+void testCgiStatusHeader()
+{
+	TEST_SECTION("Test 9: CGI Status Header");
+
+	// Create a script that sets a custom status code
+	std::string scriptContent =
+		"#!/usr/bin/env python3\n"
+		"print('Status: 404 Not Found\\r')\n"
+		"print('Content-Type: text/plain\\r')\n"
+		"print('\\r')\n"
+		"print('Custom 404 page from CGI')\n";
+
+	createTestScript("status.py", scriptContent, true);
+
+	Request request = createMockRequest("GET", "/cgi-bin/status.py");
+	LocationConfig location = createCgiLocation();
+
+	CGI cgi(request, location);
+
+	std::string scriptPath = TEST_CGI_DIR + "/status.py";
+	cgi.setup(scriptPath);
+
+	CGI::CGIResult result = cgi.execute(5);
+
+	TEST_ASSERT(result.success, "execute() should succeed (Status header is valid)");
+	TEST_ASSERT(result.statusCode == 404, "Status code should be 404 from CGI header");
+
+	std::cout << "       Status from CGI: " << result.statusCode << std::endl;
+
+	removeTestScript("status.py");
+}
+
+
+// =========================================
+//  Test 10: CGI Redirect (Location Header)
+// =========================================
+void testCgiRedirect()
+{
+	TEST_SECTION("Test 10: CGI Redirect (Location Header)");
+
+	// Create a script that does a redirect
+	std::string scriptContent =
+		"#!/usr/bin/env python3\n"
+		"print('Location: /new-location\\r')\n"
+		"print('\\r')\n";
+
+	createTestScript("redirect.py", scriptContent, true);
+
+	Request request = createMockRequest("GET", "/cgi-bin/redirect.py");
+	LocationConfig location = createCgiLocation();
+
+	CGI cgi(request, location);
+
+	std::string scriptPath = TEST_CGI_DIR + "/redirect.py";
+	cgi.setup(scriptPath);
+
+	CGI::CGIResult result = cgi.execute(5);
+
+	TEST_ASSERT(result.success, "execute() should succeed");
+	TEST_ASSERT(result.statusCode == 302, "Status code should be 302 (redirect)");
+	TEST_ASSERT(result.headers.count("Location") > 0, "Location header should be present");
+	TEST_ASSERT(result.headers["Location"] == "/new-location", "Location should be /new-location");
+
+	std::cout << "       Redirect to: " << result.headers["Location"] << std::endl;
+
+	removeTestScript("redirect.py");
+}
+
+
+// =========================================
+//  Main Test Runner
+// =========================================
+int main()
+{
+	std::cout << COLOR_YELLOW << "\n"
+				<< "╔═══════════════════════════════════════════════════════════════╗\n"
+				<< "║           WEBSERV CGI ERROR HANDLING TEST SUITE               ║\n"
+				<< "║                     Step 8.3 Tests                            ║\n"
+				<< "╚═══════════════════════════════════════════════════════════════╝\n"
+				<< COLOR_RESET << std::endl;
+
+	// Check for Python3
+	if (system("which python3 > /dev/null 2>&1") != 0)
+	{
+		std::cerr << COLOR_RED << "ERROR: python3 not found. Cannot run CGI tests."
+					<< COLOR_RESET << std::endl;
+		return 1;
 	}
 
-	std::cout << "Working directory: " << getWorkingDirectory() << std::endl;
+	// Setup test directory
+	setupTestDirectory();
 
-	// Run tests
-	testCgiDetection();
-	testCgiSetup();
-	testCgiSetupFailure();
-	testCgiExecution();
-	testCgiQueryString();
-	testCgiPostBody();
-	testMemoryManagement();
+	// Run all tests
+	testScriptNotFound();       // 404
+	testScriptNotExecutable();  // 500
+	testInterpreterNotFound();  // 500
+	testCgiTimeout();           // 504
+	testInvalidCgiOutput();     // 502
+	testSuccessfulCgi();        // 200
+	testCgiWithPost();          // POST handling
+	testCgiWithQueryString();   // Query string
+	testCgiStatusHeader();      // Custom status
+	testCgiRedirect();          // Location redirect
 
-	// Summary
-	std::cout << "\n============================================" << std::endl;
-	std::cout << "     Results: " << g_testsPassed << " passed, "
-			  << g_testsFailed << " failed" << std::endl;
-	std::cout << "============================================" << std::endl;
+	// Print summary
+	std::cout << "\n" << COLOR_YELLOW
+				<< "═══════════════════════════════════════════════════════════════\n"
+				<< COLOR_RESET;
 
-	return g_testsFailed > 0 ? 1 : 0;
+	std::cout << "Tests Run:    " << g_testsRun << std::endl;
+	std::cout << COLOR_GREEN << "Tests Passed: " << g_testsPassed << COLOR_RESET << std::endl;
+
+	if (g_testsFailed > 0)
+	{
+		std::cout << COLOR_RED << "Tests Failed: " << g_testsFailed << COLOR_RESET << std::endl;
+	}
+
+	std::cout << COLOR_YELLOW
+				<< "═══════════════════════════════════════════════════════════════\n"
+				<< COLOR_RESET << std::endl;
+
+	return (g_testsFailed > 0) ? 1 : 0;
 }

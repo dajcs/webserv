@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:56:09 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/13 21:50:39 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/14 12:13:54 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -358,27 +358,53 @@ bool CGI::validateScript(const std::string& path)
 	// Check if file exists and get info
 	if (stat(path.c_str(), &st) != 0)
 	{
-		// stat() failed - file doesn't exist or can't be accessed
-		_errorCode = 404;
-		_errorMessage = "CGI script not found: " + path;
+		/*
+			stat() failed - file doesn't exist or can't be accessed
+
+			Common errno values:
+			- ENOENT: No such file or directory -> 404
+			- EACCES: Permission denied (can't even stat) -> 403
+			- ENOTDIR: A component of path is not a directory -> 404
+			- ENAMETOOLONG: Path too long -> 414 (but we use 404 for simplicity)
+		*/
+		if (errno == EACCES)
+		{
+			_errorCode = 403;
+			_errorMessage = "Permission denied accessing CGI script: " + path;
+		}
+		else
+		{
+			_errorCode = 404;
+			_errorMessage = "CGI script not found: " + path;
+		}
 		return false;
 	}
 
 	// Check if it's a regular file (not directory, symlink, etc.)
 	if (!S_ISREG(st.st_mode))
 	{
-		_errorCode = 403;
-		_errorMessage = "CGI path is not a regular file: " + path;
+		/*
+			Path exists but is not a regular file.
+			Could be a directory, socket, device, etc.
+		*/
+		if (S_ISDIR(st.st_mode))
+		{
+			_errorCode = 500;
+			_errorMessage = "CGI path is a directory, not a script: " + path;
+		}
+		else
+		{
+			_errorCode = 500;
+			_errorMessage = "CGI path is not a regular file: " + path;
+		}
 		return false;
 	}
 
-	// Check execute permission
-	// We check if ANY execute bit is set (user, group, or other)
-	// In production, we might want stricter checks
+	// Check if ANY execute bit is set (user, group, or other).
 	if (!(st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)))
 	{
-		_errorCode = 403;
-		_errorMessage = "CGI script is not executable: " + path;
+		_errorCode = 500;
+		_errorMessage = "CGI script is not executable (check chmod +x): " + path;
 		return false;
 	}
 
@@ -1306,40 +1332,270 @@ bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
 }
 
 
+// =========================================
+//  Step 8.3: CGI Error Handling Helpers
+// =========================================
+
+/*
+	cleanupChild() - Terminate and reap a hung or failed child process
+
+	Why This Matters:
+	-----------------
+	When a CGI script hangs, crashes, or we decide to abandon it (timeout),
+	we MUST clean up properly to prevent:
+
+	1. Zombie Processes:
+	2. Resource Leaks:
+	3. Security Issues:
+
+	Termination Strategy:
+	--------------------
+	1. SIGTERM (signal 15): Polite request to terminate
+		- Allows process to clean up (close files, save state)
+		- Well-behaved processes should exit within ~1 second
+
+	2. Brief wait: Give the process a chance to exit gracefully
+
+	3. SIGKILL (signal 9): Forceful termination
+		- Process is immediately killed by the kernel
+		- No cleanup possible, but guaranteed to work
+		- Use only as a last resort
+
+	4. waitpid(): Reap the zombie
+		- Removes the process table entry
+		- Returns exit status (which we ignore here)
+
+	Parameters:
+		pid: Process ID of the child to terminate
+	*/
+	void CGI::cleanupChild(pid_t pid)
+	{
+	if (pid <= 0)
+	{
+		return;  // Invalid PID, nothing to clean up
+	}
+
+	/*
+		Step 1: Send SIGTERM (graceful termination request)
+
+		SIGTERM is the standard "please exit" signal.
+		Well-written programs catch this signal and clean up before exiting.
+
+		kill() returns:
+		-  0 on success
+		- -1 on error (check errno)
+
+		Common errno values:
+		- ESRCH: Process doesn't exist (already exited) -> good!
+		- EPERM: Permission denied (shouldn't happen for our child)
+	*/
+	if (kill(pid, SIGTERM) == -1)
+	{
+		if (errno == ESRCH)
+		{
+			// Process already exited, just reap it
+			waitpid(pid, NULL, WNOHANG);
+			return;
+		}
+		// Other errors: process might be in weird state, try to reap anyway
+		waitpid(pid, NULL, WNOHANG);
+		return;
+	}
+
+	/*
+		Step 2: Wait briefly for graceful exit
+
+		We use waitpid() with WNOHANG to check if process exited
+		without blocking. If it hasn't exited yet, we sleep a bit
+		and try again.
+
+		Total wait time: ~100ms (10 iterations × 10ms)
+		This is a reasonable time for a process to clean up.
+	*/
+	int status;
+	for (int i = 0; i < 10; ++i)
+	{
+		pid_t result = waitpid(pid, &status, WNOHANG);
+
+		if (result == pid)
+		{
+			// Child has exited, we're done
+			return;
+		}
+		else if (result == -1)
+		{
+			// Error (possibly already reaped by someone else)
+			return;
+		}
+
+		// Process still running, wait a bit
+		usleep(10000);  // 10ms
+	}
+
+	/*
+		Step 3: Send SIGKILL (forceful termination)
+
+		If the process didn't respond to SIGTERM within our timeout,
+		it's either hung or ignoring signals. SIGKILL cannot be caught
+		or ignored - the kernel forcefully terminates the process.
+
+		This is the "nuclear option" but necessary for reliability.
+	*/
+	kill(pid, SIGKILL);
+
+	/*
+		Step 4: Reap the zombie
+
+		After SIGKILL, the process will definitely exit (though not
+		instantly - there's a tiny delay). We use blocking waitpid()
+		here because we MUST reap this zombie.
+
+		We don't use WNOHANG because:
+		- SIGKILL is guaranteed to work
+		- We need to clean up before returning
+		- The delay is negligible (microseconds)
+	*/
+	waitpid(pid, &status, 0);
+}
+
+
+
+/*
+	closePipes() - Safely close all pipe file descriptors
+
+	Why Careful Pipe Closing Matters:
+	---------------------------------
+	Pipes are a fundamental IPC (Inter-Process Communication) mechanism.
+	Each pipe has two ends:
+	- Read end (fd[0]): Used to read data FROM the pipe
+	- Write end (fd[1]): Used to write data INTO the pipe
+
+	Problems if we don't close properly:
+
+	1. File Descriptor Leaks:
+		Each open FD consumes kernel resources.
+		There's a per-process limit (typically 1024).
+		Leaking FDs eventually causes open()/socket() to fail.
+
+	2. Blocked I/O:
+		Read from a pipe blocks until:
+		a) Data is available, OR
+		b) ALL write ends are closed (returns EOF)
+
+		If we forget to close the parent's copy of the write end,
+		our read() will block forever waiting for data that never comes.
+
+	3. Broken Pipes:
+		Write to a pipe with no readers causes SIGPIPE (default: process death).
+		We must close read ends we don't need before writing.
+
+	Our Pipe Setup:
+	---------------
+	stdinPipe:  Parent writes → Child reads (child's stdin)
+	stdoutPipe: Child writes → Parent reads (child's stdout)
+
+	Parent needs: stdinPipe[1] (write), stdoutPipe[0] (read)
+	Child needs:  stdinPipe[0] (read), stdoutPipe[1] (write)
+
+	Each process must close the ends it doesn't use!
+
+	Parameters:
+		stdinPipe:  Array of 2 FDs for stdin pipe (may be NULL)
+		stdoutPipe: Array of 2 FDs for stdout pipe (may be NULL)
+
+	Note: -1 indicates already-closed or never-opened FD
+	*/
+	void CGI::closePipes(int* stdinPipe, int* stdoutPipe)
+	{
+	/*
+		Close each pipe end if it's valid (>= 0)
+
+		close() on an already-closed FD returns -1 with errno=EBADF.
+		While this is technically an error, it's harmless and we ignore it.
+
+		Using -1 as "invalid/closed" is a common pattern in Unix programming.
+	*/
+	if (stdinPipe)
+	{
+		if (stdinPipe[0] >= 0)
+		{
+			close(stdinPipe[0]);
+			stdinPipe[0] = -1;  // Mark as closed
+		}
+		if (stdinPipe[1] >= 0)
+		{
+			close(stdinPipe[1]);
+			stdinPipe[1] = -1;
+		}
+	}
+
+	if (stdoutPipe)
+	{
+		if (stdoutPipe[0] >= 0)
+		{
+			close(stdoutPipe[0]);
+			stdoutPipe[0] = -1;
+		}
+		if (stdoutPipe[1] >= 0)
+		{
+			close(stdoutPipe[1]);
+			stdoutPipe[1] = -1;
+		}
+	}
+}
+
+
+
+// =========================================
+//  execute() with Enhanced Error Handling
+// =========================================
+
 /*
 	execute() - Run CGI script and capture output
 
-	This is the main CGI execution function implementing Step 8.2.
+	This is the main CGI execution function with comprehensive error handling.
 
-	Algorithm Overview:
-	-------------------
-	1. Create two pipes: one for stdin, one for stdout
-	2. Fork a child process
-	3. In child:
-	   a. Redirect pipes to stdin/stdout
-	   b. Close unused pipe ends
-	   c. Change to script directory
-	   d. Execute the CGI interpreter
-	4. In parent:
-	   a. Close unused pipe ends
-	   b. Write POST body to child's stdin (if any)
-	   c. Read child's stdout with timeout
-	   d. Wait for child to exit
-	5. Parse CGI output into headers + body
-	6. Return result
+	Error Categories and HTTP Status Codes:
+	---------------------------------------
+
+	| Error Type              | HTTP Code | Meaning                          |
+	|-------------------------|-----------|----------------------------------|
+	| Script not found        | 404       | Requested CGI doesn't exist      |
+	| Script not executable   | 500       | Server misconfiguration          |
+	| Interpreter not found   | 500       | Server misconfiguration          |
+	| pipe() failed           | 500       | System resource exhaustion       |
+	| fork() failed           | 500       | System resource exhaustion       |
+	| execve() failed         | 500       | Interpreter couldn't start       |
+	| Script crashed          | 500       | Script error (bad code)          |
+	| Script timed out        | 504       | Gateway Timeout                  |
+	| Invalid CGI output      | 502       | Bad Gateway (malformed response) |
+	| No output from script   | 500       | Script didn't produce anything   |
+
+	Cleanup Guarantees:
+	------------------
+	This function guarantees that:
+	1. All pipe FDs are closed (no leaks)
+	2. Child process is reaped (no zombies)
+	3. Allocated memory is freed (argv, envp)
+
+	Even in error cases, resources are properly cleaned up.
 
 	Parameters:
 		timeout: Maximum seconds to wait for CGI (default: 30)
 
 	Returns:
 		CGIResult with success status, headers, body, and error info
-*/
-CGI::CGIResult CGI::execute(int timeout)
-{
+	*/
+	CGI::CGIResult CGI::execute(int timeout)
+	{
 	CGIResult result;
 
+	// Initialize pipe FDs to -1 (invalid) for safe cleanup
+	int stdin_pipe[2] = {-1, -1};
+	int stdout_pipe[2] = {-1, -1};
+
 	// =========================================
-	//  Pre-flight checks
+	//  Pre-flight Checks
 	// =========================================
 	if (!_ready)
 	{
@@ -1350,76 +1606,62 @@ CGI::CGIResult CGI::execute(int timeout)
 	}
 
 	// =========================================
-	//  Step 1: Create pipes for communication
+	//  Step 1: Create Pipes for Communication
 	// =========================================
 	/*
-		We need TWO pipes for bidirectional communication:
+		Pipe Creation and Error Handling:
+		---------------------------------
+		pipe() can fail for several reasons:
+		- EMFILE: Process has too many open FDs
+		- ENFILE: System-wide FD limit reached
+		- EFAULT: Invalid buffer (shouldn't happen)
 
-		stdin_pipe:
-		[0] = read end  - child reads from here (becomes stdin)
-		[1] = write end - parent writes POST data here
-
-		stdout_pipe:
-		[0] = read end  - parent reads CGI output here
-		[1] = write end - child writes to here (becomes stdout)
-
-		Pipe diagram:
-		-------------
-		Parent                          Child
-		   |                              |
-		   |---stdin_pipe[1] --> stdin_pipe[0]--->| stdin  |
-		   |                              |       | script |
-		   |<--stdout_pipe[0] <-- stdout_pipe[1]<-| stdout |
+		All these indicate resource exhaustion -> 500 Internal Server Error
 	*/
-	int stdin_pipe[2];   // Parent writes -> Child reads (stdin)
-	int stdout_pipe[2];  // Child writes -> Parent reads (stdout)
-
-	// Create stdin pipe
 	if (pipe(stdin_pipe) == -1)
 	{
 		result.success = false;
 		result.statusCode = 500;
-		result.errorMessage = "Failed to create stdin pipe for CGI";
+		result.errorMessage = "Failed to create stdin pipe: ";
+		result.errorMessage += strerror(errno);
 		return result;
 	}
 
-	// Create stdout pipe
 	if (pipe(stdout_pipe) == -1)
 	{
-		// Clean up stdin pipe on failure
-		close(stdin_pipe[0]);
-		close(stdin_pipe[1]);
+		// Clean up the first pipe before returning
+		closePipes(stdin_pipe, NULL);
+
 		result.success = false;
 		result.statusCode = 500;
-		result.errorMessage = "Failed to create stdout pipe for CGI";
+		result.errorMessage = "Failed to create stdout pipe: ";
+		result.errorMessage += strerror(errno);
 		return result;
 	}
 
 	// =========================================
-	//  Step 2: Fork child process
+	//  Step 2: Fork Child Process
 	// =========================================
 	/*
-		fork() creates a copy of the current process:
-		- Returns 0 in child process
-		- Returns child's PID in parent process
-		- Returns -1 on error
+		Fork and Error Handling:
+		------------------------
+		fork() can fail for:
+		- EAGAIN: System process limit reached, or user's process limit
+		- ENOMEM: Not enough memory to duplicate the process
 
-		After fork, both processes have copies of all file descriptors.
-		Each process must close the pipe ends it doesn't use.
+		Both indicate severe resource constraints -> 500 Internal Server Error
 	*/
 	pid_t pid = fork();
 
 	if (pid == -1)
 	{
-		// Fork failed - clean up pipes
-		close(stdin_pipe[0]);
-		close(stdin_pipe[1]);
-		close(stdout_pipe[0]);
-		close(stdout_pipe[1]);
+		// Fork failed - clean up all pipes
+		closePipes(stdin_pipe, stdout_pipe);
 
 		result.success = false;
 		result.statusCode = 500;
-		result.errorMessage = "Failed to fork process for CGI execution";
+		result.errorMessage = "Failed to fork process: ";
+		result.errorMessage += strerror(errno);
 		return result;
 	}
 
@@ -1429,195 +1671,134 @@ CGI::CGIResult CGI::execute(int timeout)
 	if (pid == 0)
 	{
 		/*
-			CHILD PROCESS - This code runs in the forked child
+			CHILD PROCESS EXECUTION
+			-----------------------
+			We're now in the forked child process.
 
-			We need to:
-			1. Set up stdin/stdout to use our pipes
-			2. Close unused file descriptors
-			3. Change to script directory
-			4. Replace this process with CGI interpreter
+			Critical: If ANYTHING fails here, we must call _exit(), NOT exit().
 
-			If anything fails, we call _exit() not exit() to avoid
-			flushing parent's stdio buffers.
+			Why _exit() instead of exit()?
+			- exit() flushes stdio buffers (printf, etc.)
+			- The parent has copies of these buffers
+			- Flushing would cause data to appear twice or get corrupted
+			- _exit() bypasses all cleanup - just terminates immediately
+
+			Exit codes:
+			- 0: Success (normal exit)
+			- 1: Setup failure (dup2, chdir failed)
+			- 2: execve failed (interpreter problem)
+
+			The parent can check these to provide better error messages.
 		*/
 
-		// =========================================
-		//  Step 3a: Redirect stdin to read from pipe
-		// =========================================
-		/*
-			dup2(oldfd, newfd) makes newfd refer to the same file as oldfd.
-
-			dup2(stdin_pipe[0], STDIN_FILENO):
-			- Makes file descriptor 0 (stdin) point to stdin_pipe[0]
-			- Now when script reads from stdin, it reads from our pipe
-		*/
+		// Redirect stdin to read from pipe
 		if (dup2(stdin_pipe[0], STDIN_FILENO) == -1)
 		{
-			_exit(1);  // Exit with error - parent will detect this
+			_exit(1);
 		}
 
-		// =========================================
-		//  Step 3b: Redirect stdout to write to pipe
-		// =========================================
-		/*
-			dup2(stdout_pipe[1], STDOUT_FILENO):
-			- Makes file descriptor 1 (stdout) point to stdout_pipe[1]
-			- Now when script writes to stdout, it writes to our pipe
-		*/
+		// Redirect stdout to write to pipe
 		if (dup2(stdout_pipe[1], STDOUT_FILENO) == -1)
 		{
 			_exit(1);
 		}
 
-		// =========================================
-		//  Step 3c: Close unused pipe ends
-		// =========================================
-		/*
-			After dup2, we have copies of the pipe fds at 0 and 1.
-			Close the original pipe fds to:
-			- Avoid fd leaks
-			- Allow proper EOF detection
+		// Close all pipe FDs (we have copies at 0 and 1 now)
+		close(stdin_pipe[0]);
+		close(stdin_pipe[1]);
+		close(stdout_pipe[0]);
+		close(stdout_pipe[1]);
 
-			Child doesn't need:
-			- stdin_pipe[1] (parent's write end)
-			- stdout_pipe[0] (parent's read end)
-			- stdin_pipe[0] (we copied it to stdin)
-			- stdout_pipe[1] (we copied it to stdout)
-		*/
-		close(stdin_pipe[0]);   // Copied to stdin
-		close(stdin_pipe[1]);   // Parent's write end
-		close(stdout_pipe[0]);  // Parent's read end
-		close(stdout_pipe[1]);  // Copied to stdout
-
-		// =========================================
-		//  Step 3d: Change to script directory
-		// =========================================
-		/*
-			CGI scripts often use relative paths for files.
-			chdir() ensures relative paths resolve correctly.
-
-			Example:
-			Script: /var/www/cgi-bin/app.py
-			Script does: open("config.json")
-			Without chdir: looks in webserv's directory
-			With chdir: looks in /var/www/cgi-bin/
-		*/
-		if (chdir(_workingDirectory.c_str()) == -1)
+		// Change to script directory
+		if (!_workingDirectory.empty())
 		{
-			// Can't change directory - continue anyway
-			// Script might still work with absolute paths
+			if (chdir(_workingDirectory.c_str()) == -1)
+			{
+				// Non-fatal: script might work anyway with absolute paths
+				// But log this somehow in production
+			}
 		}
 
-		// =========================================
-		//  Step 3e: Prepare argv and envp for execve
-		// =========================================
+		// Prepare argv and envp
 		char** argv = getArgv();
 		char** envp = getEnvArray();
 
 		if (!argv || !envp)
 		{
-			// Memory allocation failed
 			if (argv) freeArgv(argv);
 			if (envp) freeEnvArray(envp);
 			_exit(1);
 		}
 
-		// =========================================
-		//  Step 3f: Execute the CGI interpreter
-		// =========================================
+		// Execute the CGI interpreter
 		/*
-			execve() replaces the current process with a new program:
-			- argv[0]: interpreter path (/usr/bin/python3)
-			- argv[1]: script path (/var/www/cgi-bin/test.py)
-			- envp: environment variables array
+			execve() replaces this process with the CGI script.
+			If it returns, it means it failed.
 
-			execve() only returns if it fails.
-			On success, this process becomes the CGI script.
+			Common execve() failures:
+			- ENOENT: Interpreter not found
+			- EACCES: Interpreter not executable
+			- ENOEXEC: Bad interpreter format (not an ELF binary)
+			- E2BIG: Argument list too long
 		*/
 		execve(_interpreterPath.c_str(), argv, envp);
 
 		// If we get here, execve failed
-		// Free memory (though process is about to exit)
+		// Free memory (process is about to exit anyway)
 		freeArgv(argv);
 		freeEnvArray(envp);
 
-		// Exit with error code
-		_exit(1);
+		// Exit with code 2 to indicate execve failure
+		_exit(2);
 	}
 
 	// =========================================
 	//  Parent Process (pid > 0)
 	// =========================================
-	/*
-		PARENT PROCESS - This code runs in the original webserv process
 
-		We need to:
-		1. Close unused pipe ends
-		2. Write POST body to child's stdin
-		3. Read CGI output from child's stdout
-		4. Wait for child to finish (with timeout)
-		5. Parse output
-	*/
-
-	// =========================================
-	//  Step 4a: Close unused pipe ends
-	// =========================================
-	/*
-		Parent doesn't need:
-		- stdin_pipe[0] (child's read end)
-		- stdout_pipe[1] (child's write end)
-
-		Closing stdout_pipe[1] is CRITICAL:
-		- Child's write end is the only one left
-		- When child exits, read() on stdout_pipe[0] will return 0 (EOF)
-		- If we don't close our copy, read() would block forever
-	*/
+	// Close pipe ends we don't need
 	close(stdin_pipe[0]);   // Child's read end
+	stdin_pipe[0] = -1;
 	close(stdout_pipe[1]);  // Child's write end
+	stdout_pipe[1] = -1;
 
 	// =========================================
-	//  Step 4b: Write request body to stdin
+	//  Step 3: Write Request Body to Child
 	// =========================================
-	/*
-		For POST requests, the request body must be sent to CGI via stdin.
-		The CONTENT_LENGTH env var tells script how many bytes to expect.
-
-		Important: We must close the write end after writing!
-		This sends EOF to the child, signaling end of input.
-	*/
 	const std::string& requestBody = getRequestBody();
 	if (!requestBody.empty())
 	{
-		// Write the entire body
-		// Note: In production, should handle partial writes
+		/*
+			Write POST body to CGI's stdin.
+
+			In production, we should:
+			1. Handle partial writes (EAGAIN)
+			2. Use poll() to avoid blocking
+			3. Handle SIGPIPE if child dies
+
+			For simplicity, we do a simple blocking write here.
+			The timeout mechanism will catch hung writes.
+		*/
 		ssize_t written = write(stdin_pipe[1], requestBody.c_str(), requestBody.size());
-		(void)written;  // Ignore return value for simplicity
+		(void)written;  // Ignore for now
 	}
 
-	// Close write end - signals EOF to child
+	// Close write end to signal EOF to child
 	close(stdin_pipe[1]);
+	stdin_pipe[1] = -1;
 
 	// =========================================
-	//  Step 4c: Read CGI output with timeout
+	//  Step 4: Read CGI Output with Timeout
 	// =========================================
-	/*
-		We need to read all output from the child while also
-		respecting the timeout. If script runs too long, we
-		must kill it and return 504 Gateway Timeout.
-
-		Approach:
-		1. Set pipe to non-blocking
-		2. Use select() or poll() with timeout
-		3. Read in chunks until EOF or timeout
-	*/
 	setNonBlocking(stdout_pipe[0]);
 
 	std::string cgiOutput;
 	char buffer[4096];
 	time_t startTime = time(NULL);
 	bool timedOut = false;
+	bool childExited = false;
 
-	while (true)
+	while (!childExited)
 	{
 		// Check timeout
 		if (time(NULL) - startTime >= timeout)
@@ -1626,34 +1807,98 @@ CGI::CGIResult CGI::execute(int timeout)
 			break;
 		}
 
+		// Check if child has exited
+		int status;
+		pid_t waitResult = waitpid(pid, &status, WNOHANG);
+
+		if (waitResult == pid)
+		{
+			// Child has exited
+			childExited = true;
+
+			// Read any remaining output
+			while (true)
+			{
+				ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer) - 1);
+				if (bytesRead > 0)
+				{
+					cgiOutput.append(buffer, bytesRead);
+				}
+				else
+				{
+					break;
+				}
+			}
+
+			// Check exit status
+			if (!WIFEXITED(status))
+			{
+				// Child was killed by a signal
+				close(stdout_pipe[0]);
+				stdout_pipe[0] = -1;
+
+				result.success = false;
+				result.statusCode = 500;
+
+				if (WIFSIGNALED(status))
+				{
+					int sig = WTERMSIG(status);
+					std::ostringstream oss;
+					oss << "CGI script killed by signal " << sig;
+					result.errorMessage = oss.str();
+				}
+				else
+				{
+					result.errorMessage = "CGI script terminated abnormally";
+				}
+				return result;
+			}
+
+			int exitCode = WEXITSTATUS(status);
+			if (exitCode == 2 && cgiOutput.empty())
+			{
+				// Exit code 2 = execve failed
+				close(stdout_pipe[0]);
+				stdout_pipe[0] = -1;
+
+				result.success = false;
+				result.statusCode = 500;
+				result.errorMessage = "Failed to execute CGI interpreter";
+				return result;
+			}
+
+			break;
+		}
+		else if (waitResult == -1 && errno != ECHILD)
+		{
+			// Unexpected error
+			break;
+		}
+
 		// Try to read from pipe
 		ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer) - 1);
 
 		if (bytesRead > 0)
 		{
-			// Got data - append to output
-			buffer[bytesRead] = '\0';
 			cgiOutput.append(buffer, bytesRead);
 		}
 		else if (bytesRead == 0)
 		{
-			// EOF - child closed stdout (finished writing)
-			break;
+			// EOF - child closed stdout
+			// Wait for child to fully exit
+			waitpid(pid, &status, 0);
+			childExited = true;
 		}
 		else
 		{
-			// bytesRead == -1
 			if (errno == EAGAIN || errno == EWOULDBLOCK)
 			{
-				// No data available right now - wait a bit and retry
-				// This is a simple polling approach
-				// In production, use select()/poll() for efficiency
 				usleep(10000);  // 10ms
 				continue;
 			}
 			else
 			{
-				// Real error
+				// Read error
 				break;
 			}
 		}
@@ -1661,87 +1906,66 @@ CGI::CGIResult CGI::execute(int timeout)
 
 	// Close read end
 	close(stdout_pipe[0]);
+	stdout_pipe[0] = -1;
 
 	// =========================================
-	//  Step 4d: Handle timeout
+	//  Step 5: Handle Timeout
 	// =========================================
 	if (timedOut)
 	{
 		/*
-			Script exceeded timeout - need to kill it.
+			CGI Timeout (504 Gateway Timeout)
+			---------------------------------
+			The CGI script took too long to respond.
 
-			kill(pid, SIGTERM) sends termination signal.
-			Then waitpid() reaps the zombie process.
+			This could mean:
+			- Script has an infinite loop
+			- Script is waiting for a resource (DB, network)
+			- Script is doing heavy computation
 
-			504 Gateway Timeout is the appropriate status code.
+			We must kill the process to prevent resource exhaustion.
 		*/
-		kill(pid, SIGTERM);
-
-		// Wait for child to actually terminate (prevent zombie)
-		int status;
-		waitpid(pid, &status, 0);
+		cleanupChild(pid);
 
 		result.success = false;
 		result.statusCode = 504;
-		result.errorMessage = "CGI script exceeded timeout";
+		result.errorMessage = "CGI script execution timed out after ";
+		std::ostringstream oss;
+		oss << timeout;
+		result.errorMessage += oss.str();
+		result.errorMessage += " seconds";
 		return result;
 	}
 
 	// =========================================
-	//  Step 4e: Wait for child process
+	//  Step 6: Validate Output
 	// =========================================
-	/*
-		waitpid() blocks until child exits and gets exit status.
-		WIFEXITED checks if child exited normally (vs killed by signal).
-		WEXITSTATUS gets the exit code (0 = success typically).
-
-		We must always waitpid() to prevent zombie processes.
-	*/
-	int status;
-	waitpid(pid, &status, 0);
-
-	// Check if child exited normally
-	if (!WIFEXITED(status))
-	{
-		// Child was killed by signal or crashed
-		result.success = false;
-		result.statusCode = 500;
-		result.errorMessage = "CGI script terminated abnormally";
-		return result;
-	}
-
-	// Check exit code (optional - non-zero doesn't always mean failure)
-	int exitCode = WEXITSTATUS(status);
-	if (exitCode != 0 && cgiOutput.empty())
-	{
-		// Script exited with error and produced no output
-		result.success = false;
-		result.statusCode = 500;
-		result.errorMessage = "CGI script exited with error code: " +
-		                      static_cast<std::ostringstream*>(&(std::ostringstream() << exitCode))->str();
-		return result;
-	}
-
-	// =========================================
-	//  Step 5: Parse CGI output
-	// =========================================
-	/*
-		CGI output format: headers + blank line + body
-		parseCgiOutput() separates these and validates format.
-
-		If output is malformed, we return 502 Bad Gateway.
-	*/
 	if (cgiOutput.empty())
 	{
+		/*
+			Empty Output (500 Internal Server Error)
+			----------------------------------------
+			The CGI script produced no output at all.
+
+			Possible causes:
+			- Script crashed immediately
+			- Script has syntax error (Python/PHP parse error)
+			- Script exited without printing anything
+
+			All indicate a broken script -> 500
+		*/
 		result.success = false;
 		result.statusCode = 500;
 		result.errorMessage = "CGI script produced no output";
 		return result;
 	}
 
+	// =========================================
+	//  Step 7: Parse CGI Output
+	// =========================================
 	if (!parseCgiOutput(cgiOutput, result))
 	{
-		// parseCgiOutput sets error info in result
+		// parseCgiOutput sets error info (502 Bad Gateway)
 		return result;
 	}
 
@@ -1751,4 +1975,3 @@ CGI::CGIResult CGI::execute(int timeout)
 	result.success = true;
 	return result;
 }
-
