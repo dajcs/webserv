@@ -6,24 +6,13 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:56:09 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/14 12:13:54 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/14 15:12:25 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "CGI.hpp"
 #include "Request.hpp"
 #include "Config.hpp"
-
-#include <sys/stat.h>   // stat()
-#include <sys/wait.h>   // waitpid()
-#include <unistd.h>     // access(), fork(), pipe(), dup2(), chdir(), execve()
-#include <signal.h>     // kill()
-#include <fcntl.h>      // fcntl(), O_NONBLOCK
-#include <cstdlib>      // malloc, free
-#include <cstring>      // strlen, strcpy
-#include <sstream>
-#include <cerrno>       // errno
-#include <ctime>        // time()
 
 /*
 	==================================
@@ -982,14 +971,22 @@ char** CGI::getArgv() const
 	std::strcpy(argv[0], _interpreterPath.c_str());
 
 	// argv[1]: Script path
-	argv[1] = static_cast<char*>(malloc(_scriptPath.length() + 1));
+	// use just the filename since we chdir to the script's directory
+	std::string scriptName = _scriptPath;
+	size_t lastSlash = _scriptPath.rfind('/');
+	if (lastSlash != std::string::npos)
+	{
+		scriptName = _scriptPath.substr(lastSlash + 1);
+	}
+
+	argv[1] = static_cast<char*>(malloc(scriptName.length() + 1));
 	if (!argv[1])
 	{
 		free(argv[0]);
 		free(argv);
 		return NULL;
 	}
-	std::strcpy(argv[1], _scriptPath.c_str());
+	std::strcpy(argv[1], scriptName.c_str());
 
 	// argv[2]: NULL terminator
 	argv[2] = NULL;

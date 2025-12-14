@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:40 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/14 11:58:53 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/14 14:57:04 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -111,6 +111,20 @@
 #include <string>
 #include <map>
 #include <vector>
+
+
+#include <sys/stat.h>   // stat()
+#include <sys/wait.h>   // waitpid()
+#include <unistd.h>     // access(), fork(), pipe(), dup2(), chdir(), execve()
+#include <signal.h>     // kill()
+#include <fcntl.h>      // fcntl(), O_NONBLOCK
+#include <cstdlib>      // malloc, free
+#include <cstring>      // strlen, strcpy
+#include <sstream>
+#include <cerrno>       // errno
+#include <ctime>        // time()
+
+
 
 // Forward declarations to avoid circular includes
 class Request;
