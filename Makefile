@@ -6,7 +6,7 @@
 #    By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2025/10/21 19:46:34 by anemet            #+#    #+#              #
-#    Updated: 2025/12/09 15:45:04 by anemet           ###   ########.fr        #
+#    Updated: 2025/12/14 16:23:39 by anemet           ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -26,7 +26,7 @@ CXXFLAGS = -Wall -Wextra -Werror -std=c++98 -g -fPIE -I $(INCDIR)
 NAME = webserv
 
 # Source files
-SRCS = main.cpp \
+SRCS = main_test8.3.cpp \
         CGI.cpp \
         Config.cpp \
         Connection.cpp \

@@ -1,5 +1,5 @@
 Makefile
-main_*.cpp
+src/main_*.cpp
 webserv
 *.o
 */*.o

@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:56:09 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/14 15:12:25 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/14 16:22:00 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -378,12 +378,12 @@ bool CGI::validateScript(const std::string& path)
 		*/
 		if (S_ISDIR(st.st_mode))
 		{
-			_errorCode = 500;
+			_errorCode = 403;
 			_errorMessage = "CGI path is a directory, not a script: " + path;
 		}
 		else
 		{
-			_errorCode = 500;
+			_errorCode = 403;
 			_errorMessage = "CGI path is not a regular file: " + path;
 		}
 		return false;
@@ -392,7 +392,7 @@ bool CGI::validateScript(const std::string& path)
 	// Check if ANY execute bit is set (user, group, or other).
 	if (!(st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)))
 	{
-		_errorCode = 500;
+		_errorCode = 403;
 		_errorMessage = "CGI script is not executable (check chmod +x): " + path;
 		return false;
 	}
@@ -1558,7 +1558,7 @@ bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
 	| Error Type              | HTTP Code | Meaning                          |
 	|-------------------------|-----------|----------------------------------|
 	| Script not found        | 404       | Requested CGI doesn't exist      |
-	| Script not executable   | 500       | Server misconfiguration          |
+	| Script not executable   | 403       | Forbidden                        |
 	| Interpreter not found   | 500       | Server misconfiguration          |
 	| pipe() failed           | 500       | System resource exhaustion       |
 	| fork() failed           | 500       | System resource exhaustion       |
@@ -1597,8 +1597,8 @@ bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
 	if (!_ready)
 	{
 		result.success = false;
-		result.statusCode = 500;
-		result.errorMessage = "CGI not ready - setup() was not called or failed";
+		// result.statusCode = 500;
+		// result.errorMessage = "CGI not ready - setup() was not called or failed";
 		return result;
 	}
 
