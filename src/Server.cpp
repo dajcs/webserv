@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:52 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/15 15:17:41 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/15 16:09:59 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -996,6 +996,8 @@ bool Server::handleClientEvent(int clientFd, uint32_t events)
 
 		For Step 2.2, we do a simple read and send a demo response.
 		Full HTTP parsing comes in Step 4 (Request.cpp).
+
+		TODO: fix Demo Response -> Proper Router.cpp response
 	*/
 	if (events & EPOLLIN)
 	{
