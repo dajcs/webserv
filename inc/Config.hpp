@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:56:48 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/07 20:50:37 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/15 15:36:25 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -97,7 +97,6 @@ class Config
 		std::string _configPath;			// Path to config file
 
 		// Parsing helper methods
-		void parseFile(const std::string& path);
 		void parseServerBlock(std::ifstream& file, std::string& line);
 		void parseLocationBlock(std::ifstream& file, std::string& line, ServerConfig& server);
 
@@ -121,6 +120,8 @@ class Config
 		// Destructor
 		~Config();
 
+		// parseFile mady public for tests
+		void parseFile(const std::string& path);
 
 		// Accessors
 		const std::vector<ServerConfig>& getServers() const;

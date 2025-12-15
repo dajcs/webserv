@@ -6,13 +6,11 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:52 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/15 11:14:56 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/15 15:17:41 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Server.hpp"
-
-
 
 /*
 	=================================================================
@@ -73,6 +71,58 @@
 	Typical values: 128 (SOMAXCONN is often 128 or 4096).
 */
 
+/*
+	=====================
+		EPOLL CONCEPTS
+	=====================
+
+	What is epoll?
+	--------------
+	epoll is a Linux-specific I/O event notification mechanism.
+	It's designed for applications that need to monitor many file
+	descriptors efficiently (like web servers).
+
+	The Three Epoll Syscalls:
+	-------------------------
+
+	1. epoll_create1(flags)
+		- Creates a new epoll instance
+		- Returns a file descriptor for the instance
+		- flags: 0 or EPOLL_CLOEXEC (close on exec)
+		- The returned fd must be closed with close()
+
+	2. epoll_ctl(epfd, op, fd, event)
+		- Controls the epoll instance
+		- epfd: epoll file descriptor from epoll_create1
+		- op: EPOLL_CTL_ADD, EPOLL_CTL_MOD, or EPOLL_CTL_DEL
+		- fd: file descriptor to add/modify/remove
+		- event: pointer to epoll_event struct
+
+	3. epoll_wait(epfd, events, maxevents, timeout)
+		- Waits for events on the epoll instance
+		- epfd: epoll file descriptor
+		- events: array to store returned events
+		- maxevents: max events to return
+		- timeout: -1 block, 0 return immediately, >0 wait ms
+		- Returns: number of ready FDs, 0 on timeout, -1 on error
+
+	The epoll_event Structure:
+	--------------------------
+	struct epoll_event {
+		uint32_t		events;	// Epoll events (EPOLLIN, EPOLLOUT, etc.)
+		epoll_data_t	data;	// User data variable
+	};
+
+	The data field is a union - we typically use data.fd to store
+	the file descriptor, so we know which FD triggered the event.
+
+	Why is epoll faster than poll/select?
+	-------------------------------------
+	1. Kernel maintains the interest list - no copying every call
+	2. Only returns FDs that are ready - O(1) per event
+	3. Uses efficient red-black tree internally
+	4. Edge-triggered mode avoids redundant notifications
+*/
 
 // =================================================================
 //  CONSTRUCTORS AND DESTRUCTOR
@@ -81,18 +131,18 @@
 // Default Constructor
 // Creates a basic server.
 // setConfig() should be called before init() for this to work.
-Server::Server() :
-	_config(NULL),
-	_running(false)
+Server::Server() : _config(NULL),
+				   _running(false),
+				   _epollFd(-1)
 {
 }
 
 // Parameterized Constructor
 // We store a pointer to the Config, so the Config object
 // must remain valid for the lifetime of the Server.
-Server::Server(const Config& config) :
-    _config(&config),
-    _running(false)
+Server::Server(const Config &config) : _config(&config),
+									   _running(false),
+									   _epollFd(-1)
 {
 }
 
@@ -112,7 +162,6 @@ Server::~Server()
 	stop();
 }
 
-
 // =================================================================
 //  CONFIGURATION
 // =================================================================
@@ -125,11 +174,10 @@ Server::~Server()
 	- Default-constructed servers
 	- Configuration reloading (advanced feature)
 */
-void Server::setConfig(const Config& config)
+void Server::setConfig(const Config &config)
 {
 	_config = &config;
 }
-
 
 // =================================================================
 //  INITIALIZATION - THE MAIN SETUP FUNCTION
@@ -175,7 +223,7 @@ bool Server::init()
 		return false;
 	}
 
-	const std::vector<ServerConfig>& servers = _config->getServers();
+	const std::vector<ServerConfig> &servers = _config->getServers();
 
 	if (servers.empty())
 	{
@@ -184,7 +232,8 @@ bool Server::init()
 	}
 
 	std::cout << "\n=== Initializing Server ===" << std::endl;
-	std::cout << "Found " << servers.size() << " server block(s) in configuration\n" << std::endl;
+	std::cout << "Found " << servers.size() << " server block(s) in configuration\n"
+			  << std::endl;
 
 	// =========================================
 	//  Step 2: Create Listening Sockets
@@ -200,7 +249,7 @@ bool Server::init()
 
 	for (size_t i = 0; i < servers.size(); ++i)
 	{
-		const ServerConfig& serverConfig = servers[i];
+		const ServerConfig &serverConfig = servers[i];
 
 		// Build unique key for this host:port combination
 		std::stringstream keyStream;
@@ -208,13 +257,13 @@ bool Server::init()
 		std::string key = keyStream.str();
 
 		std::cout << "Processing server block " << (i + 1)
-					<< ": " << key << std::endl;
+				  << ": " << key << std::endl;
 
 		// Check if we already have a socket for this address
 		if (socketMap.find(key) != socketMap.end())
 		{
 			std::cout << "  -> Already listening on " << key
-						<< " (reusing existing socket)" << std::endl;
+					  << " (reusing existing socket)" << std::endl;
 			continue;
 		}
 
@@ -224,7 +273,7 @@ bool Server::init()
 		if (sockfd < 0)
 		{
 			std::cerr << "Error: Failed to create socket for " << key << std::endl;
-			closeAllSockets();  // Clean up any sockets we created
+			closeAllSockets(); // Clean up any sockets we created
 			return false;
 		}
 
@@ -236,14 +285,25 @@ bool Server::init()
 		listenSocket.serverConfig = &serverConfig;
 
 		_listenSockets.push_back(listenSocket);
+		_listenFds.insert(sockfd); // Add to quick lookup set
 		socketMap[key] = _listenSockets.size() - 1;
 
 		std::cout << "  -> Created socket fd=" << sockfd
-					<< " for " << key << std::endl;
+				  << " for " << key << std::endl;
 	}
 
 	// =========================================
-	//  Step 3: Report Success
+	//  Step 3: Initialize Epoll
+	// =========================================
+	if (!initEpoll())
+	{
+		std::cerr << "Error: Failed to initialize epoll" << std::endl;
+		closeAllSockets();
+		return false;
+	}
+
+	// =========================================
+	//  Step 4: Report Success
 	// =========================================
 	std::cout << "\n=== Server Initialized ===" << std::endl;
 	std::cout << "Listening on " << _listenSockets.size() << " socket(s):" << std::endl;
@@ -251,13 +311,876 @@ bool Server::init()
 	for (size_t i = 0; i < _listenSockets.size(); ++i)
 	{
 		std::cout << "  - http://" << _listenSockets[i].host
-					<< ":" << _listenSockets[i].port
-					<< " (fd=" << _listenSockets[i].fd << ")" << std::endl;
+				  << ":" << _listenSockets[i].port
+				  << " (fd=" << _listenSockets[i].fd << ")" << std::endl;
 	}
+	std::cout << "\nEpoll fd=" << _epollFd << " initialized" << std::endl;
 	std::cout << std::endl;
 
 	return true;
+}
+
+// =================================================================
+//  EPOLL INITIALIZATION (Step 2.2)
+// =================================================================
+
+/*
+	initEpoll() - Create and configure the epoll instance
+
+	This function:
+	1. Creates the epoll instance using epoll_create1()
+	2. Adds all listening sockets to the epoll interest list
+	3. Sets up monitoring for incoming connections (EPOLLIN)
+
+	EPOLLIN for listening sockets:
+	------------------------------
+	For a listening socket, EPOLLIN means "a connection is waiting".
+	When epoll_wait() returns with EPOLLIN on a listening socket,
+	we call accept() to get the new client connection.
+
+	Returns:
+		true:  Epoll initialized successfully
+		false: Failed to create/configure epoll
+*/
+bool Server::initEpoll()
+{
+	std::cout << "\n--- Initializing Epoll ---" << std::endl;
+
+	// =========================================
+	//  Step 1: Create Epoll Instance
+	// =========================================
+	/*
+		epoll_create1(flags)
+
+		Creates a new epoll instance and returns a file descriptor.
+
+		flags:
+			0:             Standard behavior
+			EPOLL_CLOEXEC: Close FD automatically on exec()
+
+		The returned file descriptor is used for all subsequent
+		epoll operations. It must be closed with close() when done.
+
+		Note: epoll_create(size) is deprecated. epoll_create1()
+		ignores the size hint and is the modern API.
+
+		Returns:
+			>= 0: Valid epoll file descriptor
+			-1:   Error (check errno)
+
+		Common errors:
+			EMFILE: Process file table full
+			ENFILE: System file table full
+			ENOMEM: Insufficient kernel memory
+	*/
+	_epollFd = epoll_create1(0);
+
+	if (_epollFd < 0)
+	{
+		std::cerr << "epoll_create1() failed: " << strerror(errno) << std::endl;
+		return false;
 	}
+
+	std::cout << "  [1/2] epoll_create1() -> fd=" << _epollFd << std::endl;
+
+	// =========================================
+	//  Step 2: Add Listening Sockets to Epoll
+	// =========================================
+	/*
+		For each listening socket, we add it to epoll with:
+		- EPOLLIN: Notify us when connections are waiting
+
+		When a client connects, the listening socket becomes
+		"readable" - meaning accept() will succeed.
+	*/
+	for (size_t i = 0; i < _listenSockets.size(); ++i)
+	{
+		int listenFd = _listenSockets[i].fd;
+
+		if (!addToEpoll(listenFd, EPOLLIN))
+		{
+			std::cerr << "Failed to add listening socket " << listenFd
+					  << " to epoll" << std::endl;
+			closeEpoll();
+			return false;
+		}
+
+		std::cout << "  [2/2] Added listen socket fd=" << listenFd
+				  << " to epoll (port " << _listenSockets[i].port << ")"
+				  << std::endl;
+	}
+
+	std::cout << "--- Epoll Initialized ---\n"
+			  << std::endl;
+	return true;
+}
+
+/*
+	addToEpoll() - Add a file descriptor to epoll monitoring
+
+	Uses EPOLL_CTL_ADD to register a new FD with epoll.
+
+	The epoll_event structure:
+	--------------------------
+	struct epoll_event {
+		uint32_t events;      // Events to monitor
+		epoll_data_t data;    // User data (we use data.fd)
+	};
+
+	We store the FD in data.fd so that when epoll_wait() returns
+	an event, we know which FD it's for.
+
+	Parameters:
+		fd:     File descriptor to monitor
+		events: Event flags (EPOLLIN, EPOLLOUT, etc.)
+
+	Returns:
+		true:  Successfully added
+		false: Failed to add
+*/
+bool Server::addToEpoll(int fd, uint32_t events)
+{
+	struct epoll_event ev;
+
+	/*
+		Initialize the epoll_event structure
+
+		events: What events to monitor
+			EPOLLIN  - Ready for reading
+			EPOLLOUT - Ready for writing
+			EPOLLERR - Error occurred (always monitored)
+			EPOLLHUP - Hang up occurred (always monitored)
+
+		data.fd: Store the FD so we can identify it later
+	*/
+	ev.events = events;
+	ev.data.fd = fd;
+
+	/*
+		epoll_ctl(epfd, op, fd, event)
+
+		EPOLL_CTL_ADD: Register the target fd with epoll
+		EPOLL_CTL_MOD: Change the event for registered fd
+		EPOLL_CTL_DEL: Remove (deregister) fd from epoll
+
+		Returns 0 on success, -1 on error
+
+		Common errors:
+			EBADF:  Invalid fd or epfd
+			EEXIST: fd already registered (for ADD)
+			ENOENT: fd not registered (for MOD/DEL)
+			ENOMEM: No memory available
+	*/
+	if (epoll_ctl(_epollFd, EPOLL_CTL_ADD, fd, &ev) < 0)
+	{
+		std::cerr << "epoll_ctl(ADD) failed for fd=" << fd
+				  << ": " << strerror(errno) << std::endl;
+		return false;
+	}
+
+	return true;
+}
+
+/*
+	modifyEpoll() - Change the events monitored for an FD
+
+	Used when we need to change what we're watching for.
+	Example: After reading a request, we want to wait for
+	write-ready to send the response.
+
+	Parameters:
+		fd:     File descriptor already in epoll
+		events: New event flags
+
+	Returns:
+		true:  Successfully modified
+		false: Failed to modify
+*/
+bool Server::modifyEpoll(int fd, uint32_t events)
+{
+	struct epoll_event ev;
+	ev.events = events;
+	ev.data.fd = fd;
+
+	if (epoll_ctl(_epollFd, EPOLL_CTL_MOD, fd, &ev) < 0)
+	{
+		std::cerr << "epoll_ctl(MOD) failed for fd=" << fd
+				  << ": " << strerror(errno) << std::endl;
+		return false;
+	}
+
+	return true;
+}
+
+/*
+	removeFromEpoll() - Remove an FD from epoll monitoring
+
+	Called before closing a socket to clean up the epoll state.
+
+	Note: Since Linux 2.6.9, closing an FD automatically removes
+	it from epoll. But explicit removal is good practice and
+	makes the code clearer.
+
+	Parameters:
+		fd: File descriptor to remove
+
+	Returns:
+		true:  Successfully removed
+		false: Failed to remove
+*/
+bool Server::removeFromEpoll(int fd)
+{
+	/*
+		For EPOLL_CTL_DEL, the event parameter is ignored
+		since Linux 2.6.9, but we pass a valid pointer
+		for compatibility with older kernels.
+	*/
+	struct epoll_event ev;
+	ev.events = 0;
+	ev.data.fd = fd;
+
+	if (epoll_ctl(_epollFd, EPOLL_CTL_DEL, fd, &ev) < 0)
+	{
+		// ENOENT is okay - fd might already be removed
+		if (errno != ENOENT)
+		{
+			std::cerr << "epoll_ctl(DEL) failed for fd=" << fd
+					  << ": " << strerror(errno) << std::endl;
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/*
+	closeEpoll() - Close the epoll instance
+
+	Releases the epoll file descriptor.
+	Should be called during shutdown.
+*/
+void Server::closeEpoll()
+{
+	if (_epollFd >= 0)
+	{
+		std::cout << "Closing epoll fd=" << _epollFd << std::endl;
+		close(_epollFd);
+		_epollFd = -1;
+	}
+}
+
+// =================================================================
+//  MAIN EVENT LOOP (Step 2.2 - The Heart of the Server!)
+// =================================================================
+
+/*
+	run() - The main server event loop
+
+	The event loop:
+	1. Waits for events using epoll_wait()
+	2. Processes each event:
+		- Listening socket: Accept new connection
+		- Client socket: Handle read/write/errors
+	3. Periodically cleans up timed-out connections
+	4. Repeats until stop() is called
+
+	The Event Loop Pattern:
+	-----------------------
+	┌────────────────────────────────────────────┐
+	│                                            │
+	│    ┌─────────────────────────────────┐     │
+	│    │      epoll_wait()               │     │
+	│    │  (blocks until events ready)    │     │
+	│    └─────────────────────────────────┘     │
+	│                   │                        │
+	│                   ▼                        │
+	│    ┌─────────────────────────────────┐     │
+	│    │    For each ready FD:           │     │
+	│    │    - Is it a listen socket?     │     │
+	│    │      → accept() new connection  │     │
+	│    │    - Is it a client socket?     │     │
+	│    │      → handle read/write        │     │
+	│    └─────────────────────────────────┘     │
+	│                   │                        │
+	│                   ▼                        │
+	│    ┌─────────────────────────────────┐     │
+	│    │    Cleanup timed-out clients    │     │
+	│    └─────────────────────────────────┘     │
+	│                   │                        │
+	│                   ▼                        │
+	│              Loop back                     │
+	│                                            │
+	└────────────────────────────────────────────┘
+
+	This is non-blocking:
+	- We never wait for a single client
+	- All I/O happens only when ready
+	- Thousands of clients can be handled efficiently
+*/
+void Server::run()
+{
+	// Validate we're ready to run
+	if (_listenSockets.empty())
+	{
+		std::cerr << "Error: No listening sockets. Call init() first." << std::endl;
+		return;
+	}
+
+	if (_epollFd < 0)
+	{
+		std::cerr << "Error: Epoll not initialized. Call init() first." << std::endl;
+		return;
+	}
+
+	_running = true;
+	std::cout << "\n=== Server Running (epoll event loop) ===" << std::endl;
+	std::cout << "Press Ctrl+C to stop\n"
+			  << std::endl;
+
+	/*
+		Event buffer for epoll_wait()
+
+		epoll_wait() fills this array with events that occurred.
+		We process MAX_EPOLL_EVENTS at a time, but there could
+		be more - they'll be returned in the next call.
+	*/
+	struct epoll_event events[MAX_EPOLL_EVENTS];
+
+	/*
+		Track time for periodic cleanup
+		We don't want to check timeouts on every loop iteration
+		(that would be wasteful), so we do it every few seconds.
+	*/
+	time_t lastCleanup = time(NULL);
+	const int CLEANUP_INTERVAL_SEC = 10;
+
+	// =========================================
+	//  THE MAIN EVENT LOOP
+	// =========================================
+	while (_running)
+	{
+		/*
+			epoll_wait(epfd, events, maxevents, timeout)
+
+			Waits for events on the epoll instance.
+
+			Parameters:
+				epfd:      Epoll file descriptor
+				events:    Array to store returned events
+				maxevents: Maximum events to return (buffer size)
+				timeout:   -1 = block forever
+						   0  = return immediately (polling)
+						   >0 = wait up to N milliseconds
+
+			Returns:
+				>0: Number of FDs with events
+				0:  Timeout occurred (no events)
+				-1: Error occurred
+
+			The returned events array contains:
+				events[i].events: What happened (EPOLLIN, EPOLLOUT, etc.)
+				events[i].data.fd: Which file descriptor
+
+			NOTE: We use a timeout so the loop can check _running
+			periodically and handle cleanup. Without timeout,
+			Ctrl+C might not work smoothly.
+		*/
+		int numEvents = epoll_wait(_epollFd, events, MAX_EPOLL_EVENTS, EPOLL_TIMEOUT_MS);
+
+		// Handle epoll_wait errors
+		if (numEvents < 0)
+		{
+			// EINTR means interrupted by signal (e.g., Ctrl+C)
+			// This is normal and we should just continue
+			if (errno == EINTR)
+			{
+				std::cout << "epoll_wait interrupted by signal" << std::endl;
+				continue;
+			}
+
+			// Other errors are real problems
+			std::cerr << "epoll_wait() failed: " << strerror(errno) << std::endl;
+			break;
+		}
+
+		// Log event count (useful for debugging, can be removed later)
+		if (numEvents > 0)
+		{
+			std::cout << "[epoll] " << numEvents << " event(s) ready" << std::endl;
+		}
+
+		// =========================================
+		//  Process Each Event
+		// =========================================
+		for (int i = 0; i < numEvents; ++i)
+		{
+			int fd = events[i].data.fd;
+			uint32_t eventMask = events[i].events;
+
+			// Log the event (for debugging)
+			std::cout << "  Event on fd=" << fd << ": ";
+			if (eventMask & EPOLLIN)
+				std::cout << "EPOLLIN ";
+			if (eventMask & EPOLLOUT)
+				std::cout << "EPOLLOUT ";
+			if (eventMask & EPOLLERR)
+				std::cout << "EPOLLERR ";
+			if (eventMask & EPOLLHUP)
+				std::cout << "EPOLLHUP ";
+			std::cout << std::endl;
+
+			// -----------------------------------------
+			//  Case 1: Event on a LISTENING socket
+			// -----------------------------------------
+			if (isListenSocket(fd))
+			{
+				/*
+					A listening socket has EPOLLIN = connection waiting
+					We need to accept() the new connection.
+
+					NOTE: There might be multiple connections waiting!
+					In level-triggered mode, epoll will notify us again
+					if there are more. In edge-triggered mode, we'd need
+					to loop until accept() returns EAGAIN.
+				*/
+				if (eventMask & EPOLLIN)
+				{
+					int clientFd = acceptNewConnection(fd);
+					if (clientFd >= 0)
+					{
+						std::cout << "  -> Accepted new client fd=" << clientFd << std::endl;
+					}
+				}
+
+				// Handle errors on listening socket (rare but possible)
+				if (eventMask & (EPOLLERR | EPOLLHUP))
+				{
+					std::cerr << "Error on listening socket fd=" << fd << std::endl;
+					// Don't close listen socket - try to recover
+				}
+			}
+			// -----------------------------------------
+			//  Case 2: Event on a CLIENT socket
+			// -----------------------------------------
+			else
+			{
+				/*
+					Client socket events:
+					- EPOLLIN:  Data available to read
+					- EPOLLOUT: Ready to write (buffer has space)
+					- EPOLLERR: Error on socket
+					- EPOLLHUP: Client disconnected
+				*/
+				bool keepConnection = handleClientEvent(fd, eventMask);
+
+				if (!keepConnection)
+				{
+					closeClientConnection(fd);
+				}
+			}
+		}
+
+		// =========================================
+		//  Periodic Cleanup
+		// =========================================
+		time_t now = time(NULL);
+		if (now - lastCleanup >= CLEANUP_INTERVAL_SEC)
+		{
+			cleanupTimedOutConnections();
+			lastCleanup = now;
+		}
+	}
+
+	std::cout << "\n=== Event Loop Ended ===" << std::endl;
+}
+
+
+
+// =================================================================
+//  CONNECTION HANDLING
+// =================================================================
+
+/*
+	acceptNewConnection() - Accept an incoming client connection
+
+	Called when a listening socket has EPOLLIN (connection waiting).
+
+	The accept() call:
+	------------------
+	accept(sockfd, addr, addrlen)
+
+	Parameters:
+		sockfd:  Listening socket
+		addr:    Where to store client's address
+		addrlen: Size of addr buffer (in/out parameter)
+
+	Returns:
+		>= 0: New socket FD for this client
+		-1:   Error (check errno)
+
+	IMPORTANT: The returned socket is a NEW file descriptor.
+	The original listening socket continues to listen.
+
+	We then:
+	1. Set the new socket to non-blocking mode
+	2. Add it to epoll for monitoring
+	3. Store client info for tracking
+
+	Parameters:
+		listenFd: The listening socket with pending connection
+
+	Returns:
+		>= 0: Client socket FD
+		-1:   Error (connection not accepted)
+*/
+int Server::acceptNewConnection(int listenFd)
+{
+	// Prepare to store client's address
+	struct sockaddr_in clientAddr;
+	socklen_t clientLen = sizeof(clientAddr);
+
+	/*
+		accept() creates a new connected socket
+
+		The new socket:
+		- Has its own file descriptor
+		- Is connected to the specific client
+		- Inherits some properties from listening socket
+
+		The listening socket:
+		- Continues listening for more connections
+		- Is not affected by this call
+	*/
+	int clientFd = accept(listenFd, (struct sockaddr*)&clientAddr, &clientLen);
+
+	if (clientFd < 0)
+	{
+		// EAGAIN/EWOULDBLOCK = no connection ready (normal in non-blocking mode)
+		if (errno == EAGAIN || errno == EWOULDBLOCK)
+		{
+			return -1;  // Not an error, just no connection ready
+		}
+
+		std::cerr << "accept() failed: " << strerror(errno) << std::endl;
+		return -1;
+	}
+
+	// Get client info for logging
+	char clientIP[INET_ADDRSTRLEN];
+	inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, INET_ADDRSTRLEN);
+	int clientPort = ntohs(clientAddr.sin_port);
+
+	std::cout << "  New connection from " << clientIP << ":" << clientPort
+				<< " (fd=" << clientFd << ")" << std::endl;
+
+	// =========================================
+	//  Step 1: Set Non-Blocking Mode
+	// =========================================
+	/*
+		CRITICAL: Client sockets MUST be non-blocking!
+
+		If we don't set non-blocking:
+		- recv() could block waiting for data
+		- send() could block if buffer is full
+		- The entire server would freeze!
+
+		With non-blocking:
+		- recv()/send() return immediately
+		- If not ready: errno = EAGAIN
+		- We use epoll to know when ready
+	*/
+	if (!setNonBlocking(clientFd))
+	{
+		std::cerr << "Failed to set client socket non-blocking" << std::endl;
+		close(clientFd);
+		return -1;
+	}
+
+	// =========================================
+	//  Step 2: Add to Epoll
+	// =========================================
+	/*
+		Monitor the client socket for:
+		- EPOLLIN: Data available to read (client sent something)
+
+		We don't monitor EPOLLOUT yet because:
+		- We haven't read the request yet
+		- EPOLLOUT would trigger immediately (buffer is empty)
+		- We'll add EPOLLOUT when we have data to send
+	*/
+	if (!addToEpoll(clientFd, EPOLLIN))
+	{
+		std::cerr << "Failed to add client to epoll" << std::endl;
+		close(clientFd);
+		return -1;
+	}
+
+	// =========================================
+	//  Step 3: Store Client Info
+	// =========================================
+	/*
+		Track this connection:
+		- For timeout management
+		- For logging/debugging
+		- For routing to correct server config
+	*/
+	const ListenSocket* listenSock = getListenSocketByFd(listenFd);
+
+	ClientInfo clientInfo;
+	clientInfo.fd = clientFd;
+	clientInfo.connectTime = time(NULL);
+	clientInfo.lastActivity = time(NULL);
+	clientInfo.serverPort = listenSock ? listenSock->port : 0;
+	clientInfo.clientIP = clientIP;
+	clientInfo.clientPort = clientPort;
+
+	_clients[clientFd] = clientInfo;
+
+	std::cout << "  Client fd=" << clientFd << " added to epoll (total clients: "
+				<< _clients.size() << ")" << std::endl;
+
+	return clientFd;
+}
+
+
+/*
+	handleClientEvent() - Process events on a client socket
+
+	This is where we handle actual client communication.
+	For Step 2.2, we implement a simple echo/demo.
+	Full HTTP handling comes in later steps.
+
+	Parameters:
+		clientFd: The client socket with events
+		events:   The epoll events that occurred
+
+	Returns:
+		true:  Keep the connection open
+		false: Close the connection
+*/
+bool Server::handleClientEvent(int clientFd, uint32_t events)
+{
+	// Find client info
+	std::map<int, ClientInfo>::iterator it = _clients.find(clientFd);
+	if (it == _clients.end())
+	{
+		std::cerr << "Unknown client fd=" << clientFd << std::endl;
+		return false;  // Close unknown connections
+	}
+
+	ClientInfo& client = it->second;
+
+	// =========================================
+	//  Handle Errors and Disconnection
+	// =========================================
+	/*
+		EPOLLERR: Error on socket
+		EPOLLHUP: Client hung up (disconnected)
+
+		These events always close the connection.
+	*/
+	if (events & (EPOLLERR | EPOLLHUP))
+	{
+		std::cout << "  Client fd=" << clientFd;
+		if (events & EPOLLERR) std::cout << " error";
+		if (events & EPOLLHUP) std::cout << " hung up";
+		std::cout << std::endl;
+		return false;  // Close connection
+	}
+
+	// =========================================
+	//  Handle Readable (EPOLLIN)
+	// =========================================
+	/*
+		Client sent data - read it!
+
+		For Step 2.2, we do a simple read and send a demo response.
+		Full HTTP parsing comes in Step 4 (Request.cpp).
+	*/
+	if (events & EPOLLIN)
+	{
+		char buffer[4096];
+		ssize_t bytesRead = recv(clientFd, buffer, sizeof(buffer) - 1, 0);
+
+		if (bytesRead < 0)
+		{
+			// EAGAIN = no data ready (shouldn't happen after EPOLLIN)
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+			{
+				return true;  // Keep connection, try again later
+			}
+
+			std::cerr << "  recv() error on fd=" << clientFd
+						<< ": " << strerror(errno) << std::endl;
+			return false;  // Close on error
+		}
+
+		if (bytesRead == 0)
+		{
+			// Client closed connection gracefully
+			std::cout << "  Client fd=" << clientFd << " closed connection" << std::endl;
+			return false;
+		}
+
+		// Update activity timestamp
+		client.lastActivity = time(NULL);
+
+		// Null-terminate for printing (assuming text data)
+		buffer[bytesRead] = '\0';
+
+		std::cout << "  Received " << bytesRead << " bytes from fd=" << clientFd << std::endl;
+		std::cout << "  Data: " << buffer << std::endl;
+
+		// =========================================
+		//  Demo Response (Step 2.2)
+		// =========================================
+		/*
+			Send a simple HTTP response to prove the server works.
+			In later steps, Router.cpp will generate proper responses.
+		*/
+		const char* response =
+			"HTTP/1.1 200 OK\r\n"
+			"Content-Type: text/html\r\n"
+			"Content-Length: 126\r\n"
+			"Connection: close\r\n"
+			"\r\n"
+			"<html><body>"
+			"<h1>Welcome to Webserv!</h1>"
+			"<p>Step 2.2: Epoll event loop is working!</p>"
+			"<p>Connection handled successfully.</p>"
+			"</body></html>";
+
+		ssize_t bytesSent = send(clientFd, response, strlen(response), 0);
+
+		if (bytesSent < 0)
+		{
+			std::cerr << "  send() error: " << strerror(errno) << std::endl;
+		}
+		else
+		{
+			std::cout << "  Sent " << bytesSent << " bytes to fd=" << clientFd << std::endl;
+		}
+
+		// Close connection after response (HTTP/1.0 style for demo)
+		// In full implementation, check Connection: keep-alive header
+		return false;
+	}
+
+	// =========================================
+	//  Handle Writable (EPOLLOUT)
+	// =========================================
+	/*
+		Socket is ready for writing.
+		Used when we have buffered data to send.
+
+		For Step 2.2, we don't use this - we send immediately.
+		In full implementation, large responses are buffered.
+	*/
+	if (events & EPOLLOUT)
+	{
+		// For now, just log it
+		std::cout << "  fd=" << clientFd << " is writable" << std::endl;
+	}
+
+	return true;  // Keep connection open
+}
+
+
+/*
+	closeClientConnection() - Clean up a client connection
+
+	Properly closes a client connection:
+	1. Remove from epoll (stop monitoring)
+	2. Close the socket (release FD)
+	3. Remove from client tracking map
+*/
+void Server::closeClientConnection(int clientFd)
+{
+	std::cout << "  Closing client fd=" << clientFd << std::endl;
+
+	// Remove from epoll first (before closing FD)
+	removeFromEpoll(clientFd);
+
+	// Close the socket
+	close(clientFd);
+
+	// Remove from tracking
+	_clients.erase(clientFd);
+
+	std::cout << "  Client closed (remaining: " << _clients.size() << ")" << std::endl;
+}
+
+
+/*
+	cleanupTimedOutConnections() - Remove stale connections
+
+	Connections that have been idle for too long are closed.
+	This prevents resource exhaustion from abandoned connections.
+
+	Called periodically from the main event loop.
+*/
+void Server::cleanupTimedOutConnections()
+{
+	time_t now = time(NULL);
+	std::vector<int> toClose;
+
+	// Find timed-out connections
+	for (std::map<int, ClientInfo>::iterator it = _clients.begin();
+			it != _clients.end(); ++it)
+	{
+		const ClientInfo& client = it->second;
+
+		if (now - client.lastActivity > CONNECTION_TIMEOUT_SEC)
+		{
+			std::cout << "  Client fd=" << client.fd << " timed out ("
+						<< (now - client.lastActivity) << " seconds idle)" << std::endl;
+			toClose.push_back(client.fd);
+		}
+	}
+
+	// Close timed-out connections
+	for (size_t i = 0; i < toClose.size(); ++i)
+	{
+		closeClientConnection(toClose[i]);
+	}
+
+	if (!toClose.empty())
+	{
+		std::cout << "  Cleaned up " << toClose.size() << " timed-out connection(s)" << std::endl;
+	}
+}
+
+
+// =================================================================
+//  HELPER FUNCTIONS
+// =================================================================
+
+/*
+	isListenSocket() - Check if FD is a listening socket
+
+	Quick lookup using the _listenFds set.
+*/
+bool Server::isListenSocket(int fd) const
+{
+	return _listenFds.find(fd) != _listenFds.end();
+}
+
+
+/*
+	getListenSocketByFd() - Find ListenSocket info by file descriptor
+*/
+const ListenSocket* Server::getListenSocketByFd(int fd) const
+{
+	for (size_t i = 0; i < _listenSockets.size(); ++i)
+	{
+		if (_listenSockets[i].fd == fd)
+		{
+			return &_listenSockets[i];
+		}
+	}
+	return NULL;
+}
+
 
 
 // =================================================================
@@ -309,7 +1232,7 @@ bool Server::init()
 		>= 0: Valid socket file descriptor
 		-1:   Error (check errno for details)
 */
-int Server::createListenSocket(const std::string& host, int port)
+int Server::createListenSocket(const std::string &host, int port)
 {
 	// =========================================
 	//  Step 1: Create Socket
@@ -363,7 +1286,7 @@ int Server::createListenSocket(const std::string& host, int port)
 		optval:  Pointer to option value (1 = enable)
 		optlen:  Size of option value
 	*/
-	int optval = 1;  // Enable the option
+	int optval = 1; // Enable the option
 
 	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
 	{
@@ -429,7 +1352,7 @@ int Server::createListenSocket(const std::string& host, int port)
 	memset(&serverAddr, 0, sizeof(serverAddr));
 
 	serverAddr.sin_family = AF_INET;
-	serverAddr.sin_port = htons(port);  // Convert to network byte order!
+	serverAddr.sin_port = htons(port); // Convert to network byte order!
 
 	/*
 		Convert host string to binary IP address
@@ -487,21 +1410,21 @@ int Server::createListenSocket(const std::string& host, int port)
 			EACCES:			Can't bind to privileged port (< 1024)
 			EADDRNOTAVAIL:	Address not available on this machine
 	*/
-	if (bind(sockfd, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0)
+	if (bind(sockfd, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0)
 	{
 		std::cerr << "bind() failed for " << host << ":" << port
-					<< " - " << strerror(errno) << std::endl;
+				  << " - " << strerror(errno) << std::endl;
 
 		// Provide helpful hints for common errors
 		if (errno == EADDRINUSE)
 		{
 			std::cerr << "  Hint: Another process is using this port. "
-						<< "Try 'lsof -i :" << port << "' to find it." << std::endl;
+					  << "Try 'lsof -i :" << port << "' to find it." << std::endl;
 		}
 		else if (errno == EACCES)
 		{
 			std::cerr << "  Hint: Ports below 1024 require root privileges. "
-						<< "Try a port >= 1024 or run as root." << std::endl;
+					  << "Try a port >= 1024 or run as root." << std::endl;
 		}
 
 		close(sockfd);
@@ -568,7 +1491,7 @@ int Server::createListenSocket(const std::string& host, int port)
 		- Clients can now connect
 		- But we must call accept() to actually accept them
 	*/
-	const int BACKLOG = 128;  // Queue size for pending connections
+	const int BACKLOG = 128; // Queue size for pending connections
 
 	if (listen(sockfd, BACKLOG) < 0)
 	{
@@ -584,7 +1507,6 @@ int Server::createListenSocket(const std::string& host, int port)
 	// =========================================
 	return sockfd;
 }
-
 
 // =================================================================
 //  NON-BLOCKING MODE
@@ -634,82 +1556,9 @@ bool Server::setNonBlocking(int fd)
 	return true;
 }
 
-
-// =================================================================
+// ====================
 //  SERVER LIFECYCLE
-// =================================================================
-
-/*
-	run() - Main server loop (placeholder for Step 2.2)
-
-	This will be implemented fully in Step 2.2 (Poll/Epoll).
-
-	For now, it just demonstrates that sockets are working
-	by running a simple accept loop.
-*/
-void Server::run()
-{
-	if (_listenSockets.empty())
-	{
-		std::cerr << "Error: No listening sockets. Call init() first." << std::endl;
-		return;
-	}
-
-	_running = true;
-	std::cout << "\n=== Server Running ===" << std::endl;
-	std::cout << "Press Ctrl+C to stop\n" << std::endl;
-
-	/*
-		Simple demonstration loop.
-		In Step 2.2, this will be replaced with a proper poll/epoll loop.
-
-		WARNING: This blocking loop is only for testing!
-		It doesn't handle multiple clients properly.
-	*/
-	while (_running)
-	{
-		// Try to accept on first socket (blocking for demo)
-		struct sockaddr_in clientAddr;
-		socklen_t clientLen = sizeof(clientAddr);
-
-		int clientFd = accept(_listenSockets[0].fd,
-								(struct sockaddr*)&clientAddr,
-								&clientLen);
-
-		if (clientFd >= 0)
-		{
-			// Get client IP for logging
-			char clientIP[INET_ADDRSTRLEN];
-			inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, INET_ADDRSTRLEN);
-
-			std::cout << "Accepted connection from " << clientIP
-						<< ":" << ntohs(clientAddr.sin_port)
-						<< " (fd=" << clientFd << ")" << std::endl;
-
-			// Send a simple response (for testing)
-			const char* response =
-				"HTTP/1.1 200 OK\r\n"
-				"Content-Type: text/plain\r\n"
-				"Content-Length: 45\r\n"
-				"Connection: close\r\n"
-				"\r\n"
-				"Hello from webserv! Socket setup is working!\n";
-
-			send(clientFd, response, strlen(response), 0);
-			close(clientFd);
-
-			std::cout << "Sent response and closed connection\n" << std::endl;
-		}
-		else if (errno != EAGAIN && errno != EWOULDBLOCK)
-		{
-			// Real error (not just "would block")
-			std::cerr << "accept() error: " << strerror(errno) << std::endl;
-		}
-
-		// Small delay to prevent CPU spin
-		usleep(10000);  // 10ms
-	}
-}
+// ====================
 
 /*
 	stop() - Gracefully shut down the server
@@ -725,6 +1574,23 @@ void Server::stop()
 		_running = false;
 	}
 
+	// Close all client connections first
+	std::vector<int> clientFds;
+	for (std::map<int, ClientInfo>::iterator it = _clients.begin();
+			it != _clients.end(); ++it)
+	{
+		clientFds.push_back(it->first);
+	}
+
+	for (size_t i = 0; i < clientFds.size(); ++i)
+	{
+		closeClientConnection(clientFds[i]);
+	}
+
+	// Close epoll
+	closeEpoll();
+
+	// Close listening sockets
 	closeAllSockets();
 }
 
@@ -741,8 +1607,8 @@ void Server::closeAllSockets()
 		if (_listenSockets[i].fd >= 0)
 		{
 			std::cout << "Closing socket fd=" << _listenSockets[i].fd
-						<< " (" << _listenSockets[i].host
-						<< ":" << _listenSockets[i].port << ")" << std::endl;
+					  << " (" << _listenSockets[i].host
+					  << ":" << _listenSockets[i].port << ")" << std::endl;
 
 			close(_listenSockets[i].fd);
 			_listenSockets[i].fd = -1;
@@ -750,8 +1616,8 @@ void Server::closeAllSockets()
 	}
 
 	_listenSockets.clear();
+	_listenFds.clear();
 }
-
 
 // =================================================================
 //  GETTERS
@@ -762,7 +1628,18 @@ bool Server::isRunning() const
 	return _running;
 }
 
-const std::vector<ListenSocket>& Server::getListenSockets() const
+const std::vector<ListenSocket> &Server::getListenSockets() const
 {
 	return _listenSockets;
+}
+
+
+int Server::getEpollFd() const
+{
+	return _epollFd;
+}
+
+size_t Server::getClientCount() const
+{
+	return _clients.size();
 }
