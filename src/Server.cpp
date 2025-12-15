@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:52 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/14 22:50:25 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/15 11:14:56 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -51,11 +51,11 @@
 	5. BYTE ORDER (htons, htonl)
 	----------------------------
 	Network byte order is BIG-ENDIAN (most significant byte first).
-	Your CPU might be LITTLE-ENDIAN (least significant byte first).
+	An x86 CPU is LITTLE-ENDIAN (stores least significant byte first).
 
-		the Endians are from Jonathan Swift: Gulliver's Travels (1726):
-			- Big-Endians crack the egg at the big end
-			- Little-Endians crack it at the little end
+	The Endians are from Jonathan Swift: Gulliver's Travels (1726):
+		- Big-Endians crack the egg at the big end
+		- Little-Endians crack it at the little end
 
 	htons() = Host TO Network Short (16-bit, for ports)
 	htonl() = Host TO Network Long (32-bit, for IP addresses)
