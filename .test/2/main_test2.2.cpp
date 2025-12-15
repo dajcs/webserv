@@ -6,19 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/15 15:39:30 by anemet           ###   ########.fr       */
-/*                                                                            */
-/* ************************************************************************** */
-
-/* ************************************************************************** */
-/*                                                                            */
-/*   test_step2_2.cpp - Test file for Step 2.2: Poll/Epoll Implementation     */
-/*                                                                            */
-/*   This test verifies:                                                      */
-/*   1. Epoll instance creation                                               */
-/*   2. Multiple connections can be accepted without blocking                 */
-/*   3. Event loop correctly identifies listening vs client sockets           */
-/*   4. Connections are properly tracked and cleaned up                       */
+/*   Updated: 2025/12/15 19:21:50 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
