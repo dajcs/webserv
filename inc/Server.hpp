@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:30 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/15 11:12:20 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/16 11:21:19 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -69,6 +69,7 @@
 #include <set>
 
 #include "Config.hpp"
+#include "Connection.hpp"
 
 // Standard C/C++ headers
 #include <iostream>		// std::cout, std::cerr for logging
@@ -366,6 +367,10 @@ private:
 	*/
 	const ListenSocket* getListenSocketByFd(int fd) const;
 
+	// processRequest() - Route request and generate response
+	void processRequest(Connection& conn);
+
+
 
 
 	// =====================
@@ -378,6 +383,7 @@ private:
 	// Epoll-specific members
 	int							_epollFd;		// Epoll instance FD
 	std::map<int, ClientInfo>	_clients;		// Active client connections
+	std::map<int, Connection>	_connections; 	// Client connections
 	std::set<int>				_listenFds;		// Set of listening FDs (for quick lookup)
 
 

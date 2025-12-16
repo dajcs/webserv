@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:03 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/15 21:57:35 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/16 10:19:17 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -104,6 +104,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/epoll.h>	// epoll_create1(), epoll_ctl(), epoll_wait()
 
 // Forward declarations
 class Request;
@@ -232,6 +233,21 @@ public:
 			false: Error (close connection)
 	*/
 	bool writeData();
+
+/*
+	handleWriteComplete() - Handle successful completion of response
+
+	Called when all response data has been sent.
+
+	Decision logic:
+	- If keep-alive: Reset connection for next request
+	- If not keep-alive: Close the connection
+
+	Returns:
+		true if connection should stay open (keep-alive)
+		false if connection should close
+*/
+bool handleWriteComplete();
 
 
 	// ===========================

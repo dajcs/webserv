@@ -6,7 +6,7 @@
 #    By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2025/10/21 19:46:34 by anemet            #+#    #+#              #
-#    Updated: 2025/12/14 17:35:43 by anemet           ###   ########.fr        #
+#    Updated: 2025/12/16 13:39:02 by anemet           ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -17,10 +17,17 @@ OBJDIR = obj
 INCDIR = inc
 
 # Compiler
-CXX = c++
+CXX = g++
 
 # Compiler flags
-CXXFLAGS = -Wall -Wextra -Werror -std=c++98 -g -fPIE -I $(INCDIR)
+# make DEBUG=1 to compile for debugging enabled
+CXXFLAGS = -Wall -Wextra -Werror -std=c++98 -fPIE -I $(INCDIR)
+
+ifeq ($(DEBUG),1)
+    CXXFLAGS += -g -O0
+else
+    CXXFLAGS += -O2
+endif
 
 # The name of the executable
 NAME = webserv

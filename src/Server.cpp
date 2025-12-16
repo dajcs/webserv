@@ -6,11 +6,15 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:52 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/15 16:09:59 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/16 11:18:29 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Server.hpp"
+#include "Connection.hpp"
+#include "Request.hpp"
+#include "Response.hpp"
+#include "Router.hpp"
 
 /*
 	=================================================================
@@ -865,30 +869,11 @@ int Server::acceptNewConnection(int listenFd)
 		return -1;
 	}
 
-	// Get client info for logging
-	char clientIP[INET_ADDRSTRLEN];
-	inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, INET_ADDRSTRLEN);
-	int clientPort = ntohs(clientAddr.sin_port);
+	// Get server port from listen socket
+	const ListenSocket* listenSock = getListenSocketByFd(listenFd);
+	int serverPort = listenSock ? listenSock->port : 0;
 
-	std::cout << "  New connection from " << clientIP << ":" << clientPort
-				<< " (fd=" << clientFd << ")" << std::endl;
-
-	// =========================================
-	//  Step 1: Set Non-Blocking Mode
-	// =========================================
-	/*
-		CRITICAL: Client sockets MUST be non-blocking!
-
-		If we don't set non-blocking:
-		- recv() could block waiting for data
-		- send() could block if buffer is full
-		- The entire server would freeze!
-
-		With non-blocking:
-		- recv()/send() return immediately
-		- If not ready: errno = EAGAIN
-		- We use epoll to know when ready
-	*/
+	// Set non-blocking
 	if (!setNonBlocking(clientFd))
 	{
 		std::cerr << "Failed to set client socket non-blocking" << std::endl;
@@ -896,18 +881,7 @@ int Server::acceptNewConnection(int listenFd)
 		return -1;
 	}
 
-	// =========================================
-	//  Step 2: Add to Epoll
-	// =========================================
-	/*
-		Monitor the client socket for:
-		- EPOLLIN: Data available to read (client sent something)
-
-		We don't monitor EPOLLOUT yet because:
-		- We haven't read the request yet
-		- EPOLLOUT would trigger immediately (buffer is empty)
-		- We'll add EPOLLOUT when we have data to send
-	*/
+	// Add to epoll (initially monitor for EPOLLIN - waiting for request)
 	if (!addToEpoll(clientFd, EPOLLIN))
 	{
 		std::cerr << "Failed to add client to epoll" << std::endl;
@@ -915,29 +889,14 @@ int Server::acceptNewConnection(int listenFd)
 		return -1;
 	}
 
-	// =========================================
-	//  Step 3: Store Client Info
-	// =========================================
-	/*
-		Track this connection:
-		- For timeout management
-		- For logging/debugging
-		- For routing to correct server config
-	*/
-	const ListenSocket* listenSock = getListenSocketByFd(listenFd);
+	// Create and store Connection object
+	Connection conn(clientFd, clientAddr, serverPort);
+	_connections[clientFd] = conn;
 
-	ClientInfo clientInfo;
-	clientInfo.fd = clientFd;
-	clientInfo.connectTime = time(NULL);
-	clientInfo.lastActivity = time(NULL);
-	clientInfo.serverPort = listenSock ? listenSock->port : 0;
-	clientInfo.clientIP = clientIP;
-	clientInfo.clientPort = clientPort;
-
-	_clients[clientFd] = clientInfo;
-
-	std::cout << "  Client fd=" << clientFd << " added to epoll (total clients: "
-				<< _clients.size() << ")" << std::endl;
+	std::cout << "  New connection from " << conn.getClientIP()
+			  << ":" << conn.getClientPort()
+			  << " (fd=" << clientFd << ", total: " << _connections.size() << ")"
+			  << std::endl;
 
 	return clientFd;
 }
@@ -960,15 +919,15 @@ int Server::acceptNewConnection(int listenFd)
 */
 bool Server::handleClientEvent(int clientFd, uint32_t events)
 {
-	// Find client info
-	std::map<int, ClientInfo>::iterator it = _clients.find(clientFd);
-	if (it == _clients.end())
+	// Find connection info
+	std::map<int, Connection>::iterator it = _connections.find(clientFd);
+	if (it == _connections.end())
 	{
 		std::cerr << "Unknown client fd=" << clientFd << std::endl;
-		return false;  // Close unknown connections
+		return false;
 	}
 
-	ClientInfo& client = it->second;
+	Connection& conn = it->second;
 
 	// =========================================
 	//  Handle Errors and Disconnection
@@ -991,100 +950,102 @@ bool Server::handleClientEvent(int clientFd, uint32_t events)
 	// =========================================
 	//  Handle Readable (EPOLLIN)
 	// =========================================
-	/*
-		Client sent data - read it!
-
-		For Step 2.2, we do a simple read and send a demo response.
-		Full HTTP parsing comes in Step 4 (Request.cpp).
-
-		TODO: fix Demo Response -> Proper Router.cpp response
-	*/
 	if (events & EPOLLIN)
 	{
-		char buffer[4096];
-		ssize_t bytesRead = recv(clientFd, buffer, sizeof(buffer) - 1, 0);
-
-		if (bytesRead < 0)
+		// Read data from client
+		if (!conn.readData())
 		{
-			// EAGAIN = no data ready (shouldn't happen after EPOLLIN)
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-			{
-				return true;  // Keep connection, try again later
-			}
-
-			std::cerr << "  recv() error on fd=" << clientFd
-						<< ": " << strerror(errno) << std::endl;
-			return false;  // Close on error
-		}
-
-		if (bytesRead == 0)
-		{
-			// Client closed connection gracefully
-			std::cout << "  Client fd=" << clientFd << " closed connection" << std::endl;
+			// Read failed or client disconnected
 			return false;
 		}
 
-		// Update activity timestamp
-		client.lastActivity = time(NULL);
-
-		// Null-terminate for printing (assuming text data)
-		buffer[bytesRead] = '\0';
-
-		std::cout << "  Received " << bytesRead << " bytes from fd=" << clientFd << std::endl;
-		std::cout << "  Data: " << buffer << std::endl;
-
-		// =========================================
-		//  Demo Response (Step 2.2)
-		// =========================================
-		/*
-			Send a simple HTTP response to prove the server works.
-			In later steps, Router.cpp will generate proper responses.
-		*/
-		const char* response =
-			"HTTP/1.1 200 OK\r\n"
-			"Content-Type: text/html\r\n"
-			"Content-Length: 126\r\n"
-			"Connection: close\r\n"
-			"\r\n"
-			"<html><body>"
-			"<h1>Welcome to Webserv!</h1>"
-			"<p>Step 2.2: Epoll event loop is working!</p>"
-			"<p>Connection handled successfully.</p>"
-			"</body></html>";
-
-		ssize_t bytesSent = send(clientFd, response, strlen(response), 0);
-
-		if (bytesSent < 0)
+		// Check if we have a complete request
+		if (conn.hasCompleteRequest())
 		{
-			std::cerr << "  send() error: " << strerror(errno) << std::endl;
+			// Process the request and generate response
+			processRequest(conn);
 		}
-		else
-		{
-			std::cout << "  Sent " << bytesSent << " bytes to fd=" << clientFd << std::endl;
-		}
-
-		// Close connection after response (HTTP/1.0 style for demo)
-		// In full implementation, check Connection: keep-alive header
-		return false;
 	}
 
 	// =========================================
 	//  Handle Writable (EPOLLOUT)
 	// =========================================
-	/*
-		Socket is ready for writing.
-		Used when we have buffered data to send.
-
-		For Step 2.2, we don't use this - we send immediately.
-		In full implementation, large responses are buffered.
-	*/
 	if (events & EPOLLOUT)
 	{
-		// For now, just log it
-		std::cout << "  fd=" << clientFd << " is writable" << std::endl;
+		if (conn.hasDataToWrite())
+		{
+			if (!conn.writeData())
+			{
+				// Write failed
+				return false;
+			}
+		}
 	}
 
-	return true;  // Keep connection open
+	// =========================================
+	//  Update Epoll Events if State Changed
+	// =========================================
+	uint32_t neededEvents = conn.getNeededEvents();
+
+	if (neededEvents == 0)
+	{
+		// Connection should be closed
+		return false;
+	}
+
+	// Update epoll to monitor the right events
+	modifyEpoll(clientFd, neededEvents);
+
+	return true;  // keep connection open
+}
+
+
+/*
+	processRequest() - Route request and generate response
+
+	Called when a complete HTTP request has been received.
+
+	This function:
+	1. Gets the parsed Request from the Connection
+	2. Uses the Router to generate a Response
+	3. Queues the Response for sending
+*/
+void Server::processRequest(Connection& conn)
+{
+	Request* request = conn.getRequest();
+
+	if (!request)
+	{
+		std::cerr << "  No request object!" << std::endl;
+		Response errorResp = Response::error(500);
+		conn.setResponse(errorResp);
+		return;
+	}
+
+	std::cout << "  Processing: " << request->getMethod() << " "
+			  << request->getPath() << std::endl;
+
+	// Check for parsing errors
+	if (request->hasError())
+	{
+		Response errorResp = Response::error(request->getErrorCode());
+		conn.setResponse(errorResp);
+		return;
+	}
+
+	// Route the request
+	if (_config)
+	{
+		Router router(*_config);
+		Response response = router.route(*request, conn.getServerPort());
+		conn.setResponse(response);
+	}
+	else
+	{
+		// No config - send error
+		Response errorResp = Response::error(500);
+		conn.setResponse(errorResp);
+	}
 }
 
 
@@ -1100,16 +1061,11 @@ void Server::closeClientConnection(int clientFd)
 {
 	std::cout << "  Closing client fd=" << clientFd << std::endl;
 
-	// Remove from epoll first (before closing FD)
 	removeFromEpoll(clientFd);
-
-	// Close the socket
 	close(clientFd);
+	_connections.erase(clientFd);
 
-	// Remove from tracking
-	_clients.erase(clientFd);
-
-	std::cout << "  Client closed (remaining: " << _clients.size() << ")" << std::endl;
+	std::cout << "  Client closed (remaining: " << _connections.size() << ")" << std::endl;
 }
 
 
@@ -1123,24 +1079,20 @@ void Server::closeClientConnection(int clientFd)
 */
 void Server::cleanupTimedOutConnections()
 {
-	time_t now = time(NULL);
 	std::vector<int> toClose;
 
-	// Find timed-out connections
-	for (std::map<int, ClientInfo>::iterator it = _clients.begin();
-			it != _clients.end(); ++it)
+	for (std::map<int, Connection>::iterator it = _connections.begin();
+		 it != _connections.end(); ++it)
 	{
-		const ClientInfo& client = it->second;
+		Connection& conn = it->second;
 
-		if (now - client.lastActivity > CONNECTION_TIMEOUT_SEC)
+		if (conn.isTimedOut(CONNECTION_TIMEOUT_SEC))
 		{
-			std::cout << "  Client fd=" << client.fd << " timed out ("
-						<< (now - client.lastActivity) << " seconds idle)" << std::endl;
-			toClose.push_back(client.fd);
+			std::cout << "  Client fd=" << conn.getFd() << " timed out" << std::endl;
+			toClose.push_back(conn.getFd());
 		}
 	}
 
-	// Close timed-out connections
 	for (size_t i = 0; i < toClose.size(); ++i)
 	{
 		closeClientConnection(toClose[i]);

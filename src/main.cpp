@@ -6,19 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/15 19:19:48 by anemet           ###   ########.fr       */
-/*                                                                            */
-/* ************************************************************************** */
-
-/* ************************************************************************** */
-/*                                                                            */
-/*   test_step2_2.cpp - Test file for Step 2.2: Poll/Epoll Implementation     */
-/*                                                                            */
-/*   This test verifies:                                                      */
-/*   1. Epoll instance creation                                               */
-/*   2. Multiple connections can be accepted without blocking                 */
-/*   3. Event loop correctly identifies listening vs client sockets           */
-/*   4. Connections are properly tracked and cleaned up                       */
+/*   Updated: 2025/12/16 13:58:12 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -26,459 +14,308 @@
 #include "Config.hpp"
 
 #include <iostream>
-#include <cstring>
+#include <csignal>
 #include <cstdlib>
-#include <cerrno>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <signal.h>
 
-// Test result tracking
-static int g_testsRun = 0;
-static int g_testsPassed = 0;
-static int g_testsFailed = 0;
+/*
 
-// Color codes for output
-#define COLOR_GREEN  "\033[32m"
-#define COLOR_RED    "\033[31m"
-#define COLOR_YELLOW "\033[33m"
-#define COLOR_RESET  "\033[0m"
+# Test basic GET request
+curl -v http://localhost:8080/
 
-// Test macros
-#define TEST_ASSERT(condition, message) \
-	do { \
-		g_testsRun++; \
-		if (condition) { \
-			std::cout << COLOR_GREEN << "[PASS] " << COLOR_RESET << message << std::endl; \
-			g_testsPassed++; \
-		} else { \
-			std::cout << COLOR_RED << "[FAIL] " << COLOR_RESET << message << std::endl; \
-			g_testsFailed++; \
-		} \
-	} while(0)
+# Test index page
+curl http://localhost:8080/index.html
 
-#define TEST_SECTION(name) \
-	std::cout << "\n" << COLOR_YELLOW << "=== " << name << " ===" << COLOR_RESET << std::endl
+# Test 404 error
+curl http://localhost:8080/nonexistent.html
 
-// Helper: Create a client socket and connect to server
-int createClientSocket(const char* host, int port)
+# Test CGI (Python script)
+curl http://localhost:8080/cgi-bin/hello.py
+
+# Test file upload (POST)
+curl -X POST -F "file=@testfile.txt" http://localhost:8080/upload
+
+# Test DELETE (if configured)
+curl -X DELETE http://localhost:8080/uploads/testfile.txt
+
+*/
+
+/*
+    =================================================================
+        WEBSERV - A Minimal HTTP/1.1 Web Server
+    =================================================================
+
+    Usage: ./webserv [config_file]
+
+    If no config file is specified, uses "config/default.conf"
+
+    The program:
+    1. Parses command line arguments
+    2. Loads and validates configuration
+    3. Initializes the server (creates listening sockets)
+    4. Runs the main event loop (epoll-based)
+    5. Handles graceful shutdown on SIGINT/SIGTERM
+*/
+
+
+// =================================================================
+//  GLOBAL SIGNAL HANDLING
+// =================================================================
+
+/*
+    Global pointer to server for signal handling.
+
+    Why global? Signal handlers in C/C++ can only be simple functions
+    with specific signatures. They can't be member functions or have
+    custom parameters. So we need a global way to access our server.
+
+    This is a common pattern in server implementations.
+*/
+static Server* g_server = NULL;
+
+/*
+    signalHandler - Handle SIGINT (Ctrl+C) and SIGTERM
+
+    When user presses Ctrl+C or sends kill signal, we want to:
+    1. Stop the server gracefully
+    2. Close all connections properly
+    3. Free all resources
+    4. Exit cleanly
+
+    This prevents resource leaks and ensures clients get proper
+    disconnect notifications.
+*/
+static void signalHandler(int signum)
 {
-	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-	if (sockfd < 0)
-		return -1;
+    if (signum == SIGINT)
+        std::cout << "\n[INFO] Received SIGINT (Ctrl+C), shutting down..." << std::endl;
+    else if (signum == SIGTERM)
+        std::cout << "\n[INFO] Received SIGTERM, shutting down..." << std::endl;
 
-	struct sockaddr_in serverAddr;
-	memset(&serverAddr, 0, sizeof(serverAddr));
-	serverAddr.sin_family = AF_INET;
-	serverAddr.sin_port = htons(port);
-
-	if (inet_pton(AF_INET, host, &serverAddr.sin_addr) <= 0)
-	{
-		close(sockfd);
-		return -1;
-	}
-
-	// Set non-blocking for connect
-	int flags = fcntl(sockfd, F_GETFL, 0);
-	fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
-
-	int result = connect(sockfd, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
-	if (result < 0 && errno != EINPROGRESS)
-	{
-		close(sockfd);
-		return -1;
-	}
-
-	return sockfd;
-}
-
-// Helper: Wait for socket to be connected
-bool waitForConnect(int sockfd, int timeoutMs)
-{
-	fd_set writefds;
-	FD_ZERO(&writefds);
-	FD_SET(sockfd, &writefds);
-
-	struct timeval tv;
-	tv.tv_sec = timeoutMs / 1000;
-	tv.tv_usec = (timeoutMs % 1000) * 1000;
-
-	int result = select(sockfd + 1, NULL, &writefds, NULL, &tv);
-	if (result > 0 && FD_ISSET(sockfd, &writefds))
-	{
-		int error = 0;
-		socklen_t len = sizeof(error);
-		getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &error, &len);
-		return error == 0;
-	}
-	return false;
+    if (g_server != NULL)
+    {
+        g_server->stop();
+    }
 }
 
 /*
- * Test 1: Epoll Initialization
- * Verifies that epoll is properly created after server init
- */
-void testEpollInitialization(const Config& config)
+    setupSignalHandlers - Register signal handlers
+
+    We handle:
+    - SIGINT:  Ctrl+C from terminal
+    - SIGTERM: Standard termination signal
+    - SIGPIPE: Broken pipe (client disconnected while we're writing)
+
+    SIGPIPE is particularly important: by default, writing to a closed
+    socket sends SIGPIPE and terminates the program. We ignore it so
+    we can handle the error gracefully (send() will return -1 with EPIPE).
+*/
+static void setupSignalHandlers()
 {
-	TEST_SECTION("Test 1: Epoll Initialization");
+    // Use sigaction for more reliable signal handling
+    struct sigaction sa;
 
-	Server server(config);
+    // Handler for SIGINT and SIGTERM
+    sa.sa_handler = signalHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
 
-	// Before init, epoll should not be valid
-	TEST_ASSERT(server.getEpollFd() < 0, "Epoll fd invalid before init()");
+    if (sigaction(SIGINT, &sa, NULL) == -1)
+    {
+        std::cerr << "[ERROR] Failed to set SIGINT handler" << std::endl;
+    }
 
-	// Initialize server
-	bool initResult = server.init();
-	TEST_ASSERT(initResult == true, "Server init() succeeds");
+    if (sigaction(SIGTERM, &sa, NULL) == -1)
+    {
+        std::cerr << "[ERROR] Failed to set SIGTERM handler" << std::endl;
+    }
 
-	// After init, epoll should be valid
-	TEST_ASSERT(server.getEpollFd() >= 0, "Epoll fd valid after init()");
+    // Ignore SIGPIPE - we'll handle broken pipes via send() return value
+    sa.sa_handler = SIG_IGN;
+    if (sigaction(SIGPIPE, &sa, NULL) == -1)
+    {
+        std::cerr << "[ERROR] Failed to ignore SIGPIPE" << std::endl;
+    }
+}
 
-	// Listening sockets should be created
-	TEST_ASSERT(server.getListenSockets().size() > 0, "Listening sockets created");
 
-	std::cout << "  Info: Epoll fd = " << server.getEpollFd() << std::endl;
-	std::cout << "  Info: Listen sockets = " << server.getListenSockets().size() << std::endl;
+// =================================================================
+//  HELPER FUNCTIONS
+// =================================================================
+
+/*
+    printUsage - Display usage information
+
+    Called when user provides invalid arguments.
+*/
+static void printUsage(const char* programName)
+{
+    std::cout << "Usage: " << programName << " [config_file]" << std::endl;
+    std::cout << std::endl;
+    std::cout << "Arguments:" << std::endl;
+    std::cout << "  config_file  Path to configuration file (optional)" << std::endl;
+    std::cout << "               Default: config/default.conf" << std::endl;
+    std::cout << std::endl;
+    std::cout << "Examples:" << std::endl;
+    std::cout << "  " << programName << std::endl;
+    std::cout << "  " << programName << " config/default.conf" << std::endl;
+    std::cout << "  " << programName << " /path/to/custom.conf" << std::endl;
 }
 
 /*
- * Test 2: Single Connection Acceptance
- * Verifies that a single client can connect
- */
-void testSingleConnection(const Config& config)
+    printBanner - Display startup banner
+
+    Shows server info when starting up.
+*/
+static void printBanner()
 {
-	TEST_SECTION("Test 2: Single Connection Acceptance");
-
-	Server server(config);
-	bool initResult = server.init();
-	TEST_ASSERT(initResult == true, "Server initialized");
-
-	if (!initResult) return;
-
-	// Get the first listening port
-	const std::vector<ListenSocket>& sockets = server.getListenSockets();
-	if (sockets.empty())
-	{
-		TEST_ASSERT(false, "No listening sockets available");
-		return;
-	}
-
-	int port = sockets[0].port;
-	std::cout << "  Info: Connecting to port " << port << std::endl;
-
-	// Create client socket
-	int clientFd = createClientSocket("127.0.0.1", port);
-	TEST_ASSERT(clientFd >= 0, "Client socket created");
-
-	if (clientFd < 0) return;
-
-	// Wait for connection
-	bool connected = waitForConnect(clientFd, 1000);
-	TEST_ASSERT(connected, "Client connected to server");
-
-	// Clean up
-	close(clientFd);
+    std::cout << std::endl;
+    std::cout << "╔══════════════════════════════════════════╗" << std::endl;
+    std::cout << "║            WEBSERV v1.0                  ║" << std::endl;
+    std::cout << "║     A minimal HTTP/1.1 Web Server        ║" << std::endl;
+    std::cout << "║            42 School Project             ║" << std::endl;
+    std::cout << "╚══════════════════════════════════════════╝" << std::endl;
+    std::cout << std::endl;
 }
 
-/*
- * Test 3: Multiple Simultaneous Connections
- * Verifies non-blocking acceptance of multiple clients
- */
-void testMultipleConnections(const Config& config)
-{
-	TEST_SECTION("Test 3: Multiple Simultaneous Connections");
 
-	Server server(config);
-	bool initResult = server.init();
-	TEST_ASSERT(initResult == true, "Server initialized");
+// =================================================================
+//  MAIN FUNCTION
+// =================================================================
 
-	if (!initResult) return;
-
-	const std::vector<ListenSocket>& sockets = server.getListenSockets();
-	if (sockets.empty())
-	{
-		TEST_ASSERT(false, "No listening sockets available");
-		return;
-	}
-
-	int port = sockets[0].port;
-	const int NUM_CLIENTS = 10;
-	int clientFds[NUM_CLIENTS];
-	int connectedCount = 0;
-
-	std::cout << "  Info: Creating " << NUM_CLIENTS << " client connections..." << std::endl;
-
-	// Create multiple client connections rapidly
-	for (int i = 0; i < NUM_CLIENTS; i++)
-	{
-		clientFds[i] = createClientSocket("127.0.0.1", port);
-		if (clientFds[i] >= 0)
-		{
-			connectedCount++;
-		}
-	}
-
-	TEST_ASSERT(connectedCount == NUM_CLIENTS, "All client sockets created");
-
-	// Wait for connections to complete
-	int successfulConnections = 0;
-	for (int i = 0; i < NUM_CLIENTS; i++)
-	{
-		if (clientFds[i] >= 0 && waitForConnect(clientFds[i], 500))
-		{
-			successfulConnections++;
-		}
-	}
-
-	std::cout << "  Info: " << successfulConnections << "/" << NUM_CLIENTS
-				<< " connections successful" << std::endl;
-	TEST_ASSERT(successfulConnections == NUM_CLIENTS, "All clients connected");
-
-	// Clean up
-	for (int i = 0; i < NUM_CLIENTS; i++)
-	{
-		if (clientFds[i] >= 0)
-			close(clientFds[i]);
-	}
-}
-
-/*
- * Test 4: Multiple Ports
- * Verifies server can listen on multiple ports simultaneously
- */
-void testMultiplePorts(const Config& multiPortConfig)
-{
-	TEST_SECTION("Test 4: Multiple Ports");
-
-	Server server(multiPortConfig);
-	bool initResult = server.init();
-	TEST_ASSERT(initResult == true, "Multi-port server initialized");
-
-	if (!initResult) return;
-
-	const std::vector<ListenSocket>& sockets = server.getListenSockets();
-	size_t numPorts = sockets.size();
-
-	std::cout << "  Info: Server listening on " << numPorts << " port(s)" << std::endl;
-	TEST_ASSERT(numPorts >= 2, "Multiple listening ports created");
-
-	// Try to connect to each port
-	int successfulPorts = 0;
-	for (size_t i = 0; i < sockets.size(); i++)
-	{
-		int port = sockets[i].port;
-		std::string host = sockets[i].host;
-
-		// Use 127.0.0.1 if host is 0.0.0.0
-		const char* connectHost = (host == "0.0.0.0") ? "127.0.0.1" : host.c_str();
-
-		std::cout << "  Info: Testing connection to " << connectHost << ":" << port << std::endl;
-
-		int clientFd = createClientSocket(connectHost, port);
-		if (clientFd >= 0)
-		{
-			if (waitForConnect(clientFd, 1000))
-			{
-				successfulPorts++;
-				std::cout << "    -> Connection successful" << std::endl;
-			}
-			else
-			{
-				std::cout << "    -> Connection failed (timeout)" << std::endl;
-			}
-			close(clientFd);
-		}
-		else
-		{
-			std::cout << "    -> Socket creation failed" << std::endl;
-		}
-	}
-
-	std::stringstream ss;
-	ss << "Connected to " << successfulPorts << "/" << numPorts << " ports";
-	TEST_ASSERT(successfulPorts == (int)numPorts, ss.str());
-}
-
-/*
- * Test 5: Listening Socket Identification
- * Verifies isListenSocket() correctly identifies socket types
- */
-void testListenSocketIdentification(const Config& config)
-{
-	TEST_SECTION("Test 5: Listen Socket Identification");
-
-	Server server(config);
-	bool initResult = server.init();
-	TEST_ASSERT(initResult == true, "Server initialized");
-
-	if (!initResult) return;
-
-	const std::vector<ListenSocket>& sockets = server.getListenSockets();
-
-	// All listen sockets should be identified correctly
-	bool allIdentified = true;
-	for (size_t i = 0; i < sockets.size(); i++)
-	{
-		// Note: We can't directly test isListenSocket() since it's private
-		// Instead, we verify the sockets are in the list
-		if (sockets[i].fd < 0)
-		{
-			allIdentified = false;
-			break;
-		}
-	}
-
-	TEST_ASSERT(allIdentified, "All listening socket FDs are valid");
-
-	// Verify epoll has been set up
-	TEST_ASSERT(server.getEpollFd() >= 0, "Epoll instance is valid");
-}
-
-/*
- * Test 6: Connection Data Sending
- * Verifies that connections can send/receive basic data
- */
-void testConnectionData(const Config& config)
-{
-	TEST_SECTION("Test 6: Connection Data Exchange");
-
-	Server server(config);
-	bool initResult = server.init();
-	TEST_ASSERT(initResult == true, "Server initialized");
-
-	if (!initResult) return;
-
-	const std::vector<ListenSocket>& sockets = server.getListenSockets();
-	if (sockets.empty())
-	{
-		TEST_ASSERT(false, "No listening sockets");
-		return;
-	}
-
-	int port = sockets[0].port;
-	int clientFd = createClientSocket("127.0.0.1", port);
-	TEST_ASSERT(clientFd >= 0, "Client socket created");
-
-	if (clientFd < 0) return;
-
-	bool connected = waitForConnect(clientFd, 1000);
-	TEST_ASSERT(connected, "Client connected");
-
-	if (connected)
-	{
-		// Send a simple HTTP request
-		const char* request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
-		ssize_t bytesSent = send(clientFd, request, strlen(request), 0);
-		TEST_ASSERT(bytesSent > 0, "Data sent successfully");
-
-		std::cout << "  Info: Sent " << bytesSent << " bytes" << std::endl;
-	}
-
-	close(clientFd);
-}
-
-/*
- * Test 7: Server Stop and Cleanup
- * Verifies server can be stopped and resources are cleaned up
- */
-void testServerCleanup(const Config& config)
-{
-	TEST_SECTION("Test 7: Server Stop and Cleanup");
-
-	{
-		Server server(config);
-		bool initResult = server.init();
-		TEST_ASSERT(initResult == true, "Server initialized");
-
-		// Check server is ready
-		TEST_ASSERT(server.getEpollFd() >= 0, "Epoll fd valid");
-		TEST_ASSERT(server.getListenSockets().size() > 0, "Has listening sockets");
-
-		// Stop the server
-		server.stop();
-		TEST_ASSERT(server.isRunning() == false, "Server stopped");
-	}
-
-	// Server destructor called - if we get here without crash, cleanup worked
-	TEST_ASSERT(true, "Server destructor completed without crash");
-}
-
-/*
- * Print test summary
- */
-void printSummary()
-{
-	std::cout << "\n" << COLOR_YELLOW << "========================================" << COLOR_RESET << std::endl;
-	std::cout << COLOR_YELLOW << "           TEST SUMMARY" << COLOR_RESET << std::endl;
-	std::cout << COLOR_YELLOW << "========================================" << COLOR_RESET << std::endl;
-	std::cout << "Total tests run:    " << g_testsRun << std::endl;
-	std::cout << COLOR_GREEN << "Tests passed:       " << g_testsPassed << COLOR_RESET << std::endl;
-	std::cout << COLOR_RED << "Tests failed:       " << g_testsFailed << COLOR_RESET << std::endl;
-	std::cout << COLOR_YELLOW << "========================================" << COLOR_RESET << std::endl;
-
-	if (g_testsFailed == 0)
-	{
-		std::cout << COLOR_GREEN << "\n✓ ALL TESTS PASSED!" << COLOR_RESET << std::endl;
-	}
-	else
-	{
-		std::cout << COLOR_RED << "\n✗ SOME TESTS FAILED!" << COLOR_RESET << std::endl;
-	}
-}
-
-/*
- * Main test runner
- */
 int main(int argc, char** argv)
 {
-	// Ignore SIGPIPE to prevent crashes on broken connections
-	signal(SIGPIPE, SIG_IGN);
+    // =====================
+    //  1. Parse Arguments
+    // =====================
 
-	std::cout << COLOR_YELLOW << "========================================" << COLOR_RESET << std::endl;
-	std::cout << COLOR_YELLOW << "   Step 2.2: Epoll Implementation Tests" << COLOR_RESET << std::endl;
-	std::cout << COLOR_YELLOW << "========================================" << COLOR_RESET << std::endl;
+    std::string configPath;
 
-	// Load default config
-	std::string configPath = "config/default.conf";
-	std::string multiPortConfigPath = "config/multi_port.conf";
+    if (argc > 2)
+    {
+        std::cerr << "[ERROR] Too many arguments" << std::endl;
+        printUsage(argv[0]);
+        return EXIT_FAILURE;
+    }
+    else if (argc == 2)
+    {
+        // Check for help flags
+        std::string arg = argv[1];
+        if (arg == "-h" || arg == "--help")
+        {
+            printUsage(argv[0]);
+            return EXIT_SUCCESS;
+        }
+        configPath = argv[1];
+    }
+    else
+    {
+        // No arguments: use default config
+        configPath = "config/default.conf";
+    }
 
-	if (argc > 1)
-	{
-		configPath = argv[1];
-	}
+    // Print startup banner
+    printBanner();
+    std::cout << "[INFO] Starting webserv..." << std::endl;
+    std::cout << "[INFO] Config file: " << configPath << std::endl;
 
-	std::cout << "\nLoading config: " << configPath << std::endl;
+    // =====================
+    //  2. Setup Signal Handlers
+    // =====================
 
-	try
-	{
-		// Load single-port config
-		Config config(configPath);
-		config.parseFile(configPath);
+    setupSignalHandlers();
 
-		// Load multi-port config
-		Config multiPortConfig(multiPortConfigPath);
-		multiPortConfig.parseFile(multiPortConfigPath);
+    // =====================
+    //  3. Parse Configuration
+    // =====================
 
-		// Run tests
-		testEpollInitialization(config);
-		testSingleConnection(config);
-		testMultipleConnections(config);
-		testMultiplePorts(multiPortConfig);
-		testListenSocketIdentification(config);
-		testConnectionData(config);
-		testServerCleanup(config);
+    Config config;
 
-		printSummary();
+    try
+    {
+        std::cout << "[INFO] Parsing configuration..." << std::endl;
+        config.parseFile(configPath);
 
-	}
-	catch (const std::exception& e)
-	{
-		std::cerr << COLOR_RED << "\nError: " << e.what() << COLOR_RESET << std::endl;
-		return 1;
-	}
+        // Optional: Print parsed config for debugging
+        // config.printConfig();
 
-	return (g_testsFailed > 0) ? 1 : 0;
+        std::cout << "[INFO] Configuration loaded successfully" << std::endl;
+        std::cout << "[INFO] Configured servers: " << config.getServers().size() << std::endl;
+
+        // Print listening ports
+        const std::vector<ServerConfig>& servers = config.getServers();
+        for (size_t i = 0; i < servers.size(); ++i)
+        {
+            std::cout << "[INFO]   - " << servers[i].host << ":" << servers[i].port << std::endl;
+        }
+    }
+    catch (const ConfigException& e)
+    {
+        std::cerr << "[ERROR] Configuration error: " << e.what() << std::endl;
+        return EXIT_FAILURE;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "[ERROR] Unexpected error loading config: " << e.what() << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    // =====================
+    //  4. Initialize Server
+    // =====================
+
+    Server server(config);
+
+    // Set global pointer for signal handler
+    g_server = &server;
+
+    try
+    {
+        std::cout << "[INFO] Initializing server..." << std::endl;
+
+        if (!server.init())
+        {
+            std::cerr << "[ERROR] Failed to initialize server" << std::endl;
+            return EXIT_FAILURE;
+        }
+
+        std::cout << "[INFO] Server initialized successfully" << std::endl;
+        std::cout << "[INFO] Listening sockets created: " << server.getListenSockets().size() << std::endl;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "[ERROR] Server initialization failed: " << e.what() << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    // =====================
+    //  5. Run Server
+    // =====================
+
+    std::cout << std::endl;
+    std::cout << "═══════════════════════════════════════════" << std::endl;
+    std::cout << "  Server is running! Press Ctrl+C to stop" << std::endl;
+    std::cout << "═══════════════════════════════════════════" << std::endl;
+    std::cout << std::endl;
+
+    try
+    {
+        // This blocks until server.stop() is called (via signal handler)
+        server.run();
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "[ERROR] Server error: " << e.what() << std::endl;
+        g_server = NULL;
+        return EXIT_FAILURE;
+    }
+
+    // =====================
+    //  6. Cleanup
+    // =====================
+
+    g_server = NULL;
+    std::cout << "[INFO] Server stopped gracefully" << std::endl;
+    std::cout << "[INFO] Goodbye!" << std::endl;
+
+    return EXIT_SUCCESS;
 }
