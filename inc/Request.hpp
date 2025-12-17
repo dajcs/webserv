@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:13 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/10 20:14:12 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/17 14:17:31 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -63,6 +63,10 @@ class Request
 		size_t getContentLength() const;
 		size_t getBodySize() const;
 
+		// Client IP (set by Connectioin/Server for CGI use)
+		void setClientIP(const std::string& ip);
+		const std::string& getClientIP() const;
+
 	private:
 		std::string _method;
 		std::string _uri;
@@ -71,6 +75,7 @@ class Request
 		std::string _httpVersion;
 		std::string _body;
 		std::map<std::string, std::string> _headers;
+		std::string _clientIP; // Client's IP address for CGI
 
 		ParseState _state;
 		int _errorCode;

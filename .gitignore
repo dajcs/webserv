@@ -4,3 +4,4 @@ webserv
 *.o
 */*.o
 www/uploads/*
+www/large.bin

@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:56:09 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/14 17:00:41 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/17 14:21:29 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -716,17 +716,21 @@ void CGI::buildEnvironment()
 	/*
 		REMOTE_ADDR
 		IP address of the client.
-		TODO: This should come from the connection, not the request.
-		For now, we use a placeholder.
 	*/
-	_envVars["REMOTE_ADDR"] = "127.0.0.1";  // Placeholder
+	std::string clientIP = _request->getClientIP();
+	if (clientIP.empty())
+	{
+		clientIP = "127.0.0.1";  // Fallback if not set
+	}
+	_envVars["REMOTE_ADDR"] = clientIP;
 
 	/*
 		REMOTE_HOST
 		Hostname of the client (if available via reverse DNS).
 		Often same as REMOTE_ADDR if DNS lookup not done.
+		We don't do DNS lookups, so we use the IP address.
 	*/
-	_envVars["REMOTE_HOST"] = "127.0.0.1";  // Placeholder
+	_envVars["REMOTE_HOST"] = clientIP;
 
 	// =========================================
 	//  HTTP Headers as Environment Variables

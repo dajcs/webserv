@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:52 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/16 11:18:29 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/17 14:20:24 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1021,6 +1021,9 @@ void Server::processRequest(Connection& conn)
 		conn.setResponse(errorResp);
 		return;
 	}
+
+	// Set client IP from connection (for CGI REMOTE_ADDR)
+	request->setClientIP(conn.getClientIP());
 
 	std::cout << "  Processing: " << request->getMethod() << " "
 			  << request->getPath() << std::endl;

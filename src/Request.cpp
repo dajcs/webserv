@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:28 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/10 16:04:36 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/17 14:18:52 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -36,6 +36,7 @@ Request::Request() :
 	_queryString(""),
 	_httpVersion(""),
 	_body(""),
+	_clientIP(""),
 	_state(PARSE_REQUEST_LINE),
 	_errorCode(0),
 	_buffer(""),
@@ -54,6 +55,7 @@ Request::Request(const Request& other) :
 	_queryString(other._queryString),
 	_httpVersion(other._httpVersion),
 	_body(other._body),
+	_clientIP(other._clientIP),
 	_state(other._state),
 	_errorCode(other._errorCode),
 	_buffer(other._buffer),
@@ -72,6 +74,7 @@ Request& Request::operator=(const Request& other)
 		_queryString = other._queryString;
 		_httpVersion = other._httpVersion;
 		_body = other._body;
+		_clientIP = other._clientIP;
 		_state = other._state;
 		_errorCode = other._errorCode;
 		_buffer = other._buffer;
@@ -103,6 +106,7 @@ void Request::reset()
 	_queryString.clear();
 	_httpVersion.clear();
 	_body.clear();
+	_clientIP.clear();
 	_headers.clear();
 	_buffer.clear();
 
@@ -257,8 +261,8 @@ bool Request::parse(const std::string& data)
 					_contentLength = std::atol(contentLength.c_str());
 
 					// TODO: Check against client_max_body_size from config
-					// For now, use a default limit of 10MB
-					if(_contentLength > 10485760) // 10 MB
+					// For now, use a default limit of 1MB
+					if(_contentLength > 10485760) // 1MB
 					{
 						_state = PARSE_ERROR;
 						_errorCode = 413; // Payload Too Large
@@ -807,7 +811,7 @@ bool Request::parseChunkedBody()
 				Client sends: 1000000\r\n<1MB data>\r\n1000000\r\n<1MB data>...
 				Without limit, serer runs out of memory
 		*/
-		if (_body.size() + chunkSize > 10485760) // 10 MB limit
+		if (_body.size() + chunkSize > 1048576) // 1MB limit
 		{
 			_state = PARSE_ERROR;
 			_errorCode = 413; // Payload Too Large
@@ -955,4 +959,14 @@ size_t Request::getContentLength() const
 size_t Request::getBodySize() const
 {
 	return _body.size();
+}
+
+void Request::setClientIP(const std::string& ip)
+{
+	_clientIP = ip;
+}
+
+const std::string& Request::getClientIP() const
+{
+	return _clientIP;
 }
