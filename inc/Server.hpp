@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:30 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/16 11:21:19 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/17 21:50:06 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -135,8 +135,11 @@ static const int MAX_EPOLL_EVENTS = 64;
 static const int EPOLL_TIMEOUT_MS = 1000;  // 1 second
 
 // Connection timeout in seconds (for cleanup)
-static const int CONNECTION_TIMEOUT_SEC = 60;
-
+#ifdef DEBUG
+	static const int CONNECTION_TIMEOUT_SEC = 3600; // 1 hour
+#else
+	static const int CONNECTION_TIMEOUT_SEC = 60;   // 1 minute
+#endif
 
 /*
 	=================================================================
