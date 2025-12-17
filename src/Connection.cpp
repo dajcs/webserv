@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:16 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/16 10:17:29 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/17 13:43:11 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -616,18 +616,23 @@ bool Connection::parseRequest()
 	}
 
 	/*
-		Feed the entire read buffer to the request parser.
+		Feed ONLY the new data to the request parser.
 
-		The Request::parse() method is incremental:
-		- It buffers data internally
-		- Returns true when the request is complete
-		- Returns false if more data is needed
+		The Request::parse() method appends data to its internal buffer,
+		so we must only feed data we haven't sent before.
 
-		Note: We could be smarter and only feed new data,
-		but for simplicity we feed everything.
-		The Request class handles duplicates internally.
+		After feeding, we clear the read buffer since the Request
+		now owns that data.
 	*/
+	if (_readBuffer.empty())
+	{
+		return _request->isComplete() || _request->hasError();
+	}
+
 	bool complete = _request->parse(_readBuffer);
+
+	// Clear the read buffer - the Request has consumed/stored it
+	_readBuffer.clear();
 
 	if (complete)
 	{
@@ -639,12 +644,9 @@ bool Connection::parseRequest()
 		if (_request->hasError())
 		{
 			std::cerr << "  [Connection fd=" << _fd << "] Parse error: "
-					  << _request->getErrorCode() << std::endl;
+						<< _request->getErrorCode() << std::endl;
 			// We'll still return true - the error response will be generated
 		}
-
-		// Clear the read buffer (we've consumed the request)
-		_readBuffer.clear();
 
 		// Determine if this should be a keep-alive connection
 		determineKeepAlive();

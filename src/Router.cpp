@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/14 20:05:45 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/17 10:27:24 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -175,16 +175,11 @@ Response Router::route(const Request& request, int serverPort)
 	}
 
 	// Step 2: Find matching server block
-	/*
-		A webserver can host multiple "virtual servers" on different ports.
-		Example:
-			- Port 8080: Main website
-			- Port 8081: Admin panel
-			- Port 8082: API server
+	// Get Host header for virtual hosting
+	std::string hostHeader = request.getHeader("Host");
 
-		We need to find which server block handles this port
-	*/
-	const ServerConfig* server = findServer(serverPort);
+	// Find server using both port AND hostname
+	const ServerConfig* server = findServer(serverPort, hostHeader);
 	if (!server)
 	{
 		return errorResponse(500);
@@ -298,37 +293,51 @@ Response Router::route(const Request& request, int serverPort)
 // ==========================================
 
 /*
-	findServer()  -  Find the server block for a given port
+    findServer() - Find server block matching port AND hostname (virtual hosting)
 
-	Webservers can have multiple server blocks, each handling different ports
-	or hostnames (virtual hosting)
+    Virtual hosting allows multiple websites on the same IP:port,
+    distinguished by the Host header.
 
-	For simplicity we match by port only.
-	Full virtual hosting would also check for the Host header.
-
-	Input: port number
-	Return: Pointer to matching ServerConfig or NULL if not found
+    Example:
+        curl --resolve example.com:8080:127.0.0.1 http://example.com/
+        -> Host header will be "example.com"
+        -> We find the server block with server_name example.com on port 8080
 */
-const ServerConfig* Router::findServer(int port) const
+const ServerConfig* Router::findServer(int port, const std::string& hostname) const
 {
-	const std::vector<ServerConfig> &servers = _config->getServers();
+	if (!_config)
+		return NULL;
+
+	const std::vector<ServerConfig>& servers = _config->getServers();
+	const ServerConfig* defaultServer = NULL;
+
+	// Extract hostname without port (Host header might be "example.com:8080")
+	std::string host = hostname;
+	size_t colonPos = host.find(':');
+	if (colonPos != std::string::npos)
+		host = host.substr(0, colonPos);
 
 	for (size_t i = 0; i < servers.size(); ++i)
 	{
-		if (servers[i].port == port)
+		if (servers[i].port != port)
+			continue;
+
+		// Check if this server matches the hostname
+		const std::vector<std::string>& names = servers[i].server_names;
+
+		for (size_t j = 0; j < names.size(); ++j)
 		{
-			return &servers[i];
+			if (names[j] == host)
+				return &servers[i];  // Exact match found
 		}
+
+		// Remember first server on this port as default
+		if (!defaultServer)
+			defaultServer = &servers[i];
 	}
 
-	// No exact match - return first server as default
-	// This mimics NGINX's default_server behaviour
-	if (!servers.empty())
-	{
-		return &servers[0];
-	}
-
-	return NULL;
+	// No exact match - return default server for this port
+	return defaultServer;
 }
 
 /*

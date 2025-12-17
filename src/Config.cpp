@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:03 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/14 17:45:08 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/17 09:22:07 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -677,11 +677,11 @@ void Config::parseLocationBlock(std::ifstream& file, std::string& line, ServerCo
 	Checks for common configuration errors:
 		- port numbers in valid range (1..65535)
 		- root directories exist (optional, could check at request time)
-		- no duplicate port bindings on same host
 */
 void Config::validateConfig() const
 {
-	std::set<std::pair<std::string, int> > usedPorts;
+	// Track host:port -> list of server_names for virtual hosting
+	std::map<std::pair<std::string, int>, std::set<std::string> > usedAddresses;
 
 	for (size_t i = 0; i < _servers.size(); ++i)
 	{
@@ -695,15 +695,27 @@ void Config::validateConfig() const
 			throw ConfigException(oss.str());
 		}
 
-		// Check for duplicate host:port combinations
 		std::pair<std::string, int> hostPort(server.host, server.port);
-		if (usedPorts.find(hostPort) != usedPorts.end())
+
+		// Get server names (use empty string for default server)
+		std::vector<std::string> names = server.server_names;
+		if (names.empty())
+			names.push_back("");  // Default server marker
+
+		for (size_t j = 0; j < names.size(); ++j)
 		{
-			std::ostringstream oss;
-			oss << "Duplicate listen address: " << server.host << ":" << server.port;
-			throw ConfigException(oss.str());
+			if (usedAddresses[hostPort].count(names[j]))
+			{
+				std::ostringstream oss;
+				if (names[j].empty())
+					oss << "Duplicate default server for " << server.host << ":" << server.port;
+				else
+					oss << "Duplicate server_name '" << names[j] << "' for "
+						<< server.host << ":" << server.port;
+				throw ConfigException(oss.str());
+			}
+			usedAddresses[hostPort].insert(names[j]);
 		}
-		usedPorts.insert(hostPort);
 
 		// Validate locations
 		for (size_t j = 0; j < server.locations.size(); ++j)

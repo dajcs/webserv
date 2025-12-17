@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/16 13:58:12 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/17 13:23:53 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -23,19 +23,25 @@
 curl -v http://localhost:8080/
 
 # Test index page
-curl http://localhost:8080/index.html
+curl -v http://localhost:8080/index.html
 
 # Test 404 error
-curl http://localhost:8080/nonexistent.html
+curl -v http://localhost:8080/nonexistent.html
 
 # Test CGI (Python script)
-curl http://localhost:8080/cgi-bin/hello.py
+curl -v http://localhost:8080/cgi-bin/hello.py
 
 # Test file upload (POST)
-curl -X POST -F "file=@testfile.txt" http://localhost:8080/upload
+curl -v -F "file=@Makefile" http://localhost:8080/uploads
 
 # Test DELETE (if configured)
-curl -X DELETE http://localhost:8080/uploads/testfile.txt
+curl -v -X DELETE http://localhost:8080/uploads/Makefile
+
+# Test redirect
+curl -v http://localhost:8080/old-page
+
+# Test virtual host at example.com
+curl -v --resolve example.com:8080:127.0.0.1 http://example.com:8080/
 
 */
 

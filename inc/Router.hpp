@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:30 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/14 20:02:45 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/17 10:14:39 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -81,7 +81,7 @@ private:
 	// ================================
 	//  Server/Location Finding
 	// ================================
-	const ServerConfig* findServer(int port) const;
+	const ServerConfig* findServer(int port, const std::string& hostname = "") const;
 	const LocationConfig* findLocation(const ServerConfig& server,
 										const std::string& path) const;
 
