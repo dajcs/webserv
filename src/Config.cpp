@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:03 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/17 09:22:07 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/18 14:21:58 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -132,8 +132,9 @@ const LocationConfig* ServerConfig::findLocation(const std::string &uri) const
 */
 Config::Config() : _configPath("config/default.conf")
 {
-	parseFile(_configPath);
-	validateConfig();
+	// Don't parse here - let main() call parseFile() explicitly
+	// parseFile(_configPath);
+	// validateConfig();
 }
 
 /*
@@ -553,7 +554,8 @@ void Config::parseLocationBlock(std::ifstream& file, std::string& line, ServerCo
 			}
 			location.index = tokens[1];
 		}
-		else if (directive == "allowed_methods" || directive == "limit_except")
+		else if (directive == "allowed_methods" || directive == "limit_except" ||
+				directive == "allow_methods")  // NGINX-style allow_methods syntax
 		{
 			/*
 				allowed_methods directive: which HTTP methods are allowed

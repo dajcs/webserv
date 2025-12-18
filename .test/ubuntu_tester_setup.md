@@ -1,4 +1,6 @@
-Before starting please follow the next few steps (files content can be anything and will be shown to you by the test):
+I need to test my webserver setup on an Ubuntu environment.
+I have been provided with an `ubuntu_tester` application that is asking me to prepare a specific configuration and directory structure for testing described below. 
+Can you help me set up the necessary files and directories as per the requirements?
 
 - Download the cgi_test executable on the host
 - Create a directory YoupiBanane with:
@@ -10,8 +12,6 @@ Before starting please follow the next few steps (files content can be anything 
   - a sub directory called Yeah
     - a file name not_happy.bad_extension in Yeah
 
-press enter to continue
-
 Setup the configuration file as follow:
 - / must answer to GET request ONLY
 - /put_test/* must answer to PUT request and save files to a directory of your choice
@@ -19,10 +19,7 @@ Setup the configuration file as follow:
 - /post_body must answer anything to POST request with a maxBody of 100
 - /directory/ must answer to GET request and the root of it would be the repository YoupiBanane and if no file are requested, it should search for youpi.bad_extension files
 
-press enter to continue
-
 Before starting please verify that the server is launched
-press enter to continue
 
 
 Test GET http://localhost:8080/

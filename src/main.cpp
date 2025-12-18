@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/17 15:12:11 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/18 13:56:03 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -256,7 +256,7 @@ int main(int argc, char** argv)
         config.parseFile(configPath);
 
         // Optional: Print parsed config for debugging
-        // config.printConfig();
+        config.printConfig();
 
         std::cout << "[INFO] Configuration loaded successfully" << std::endl;
         std::cout << "[INFO] Configured servers: " << config.getServers().size() << std::endl;
