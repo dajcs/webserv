@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:13 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/17 14:17:31 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/18 15:37:50 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -15,6 +15,10 @@
 
 #include <string>
 #include <map>
+#include <iostream>
+#include <algorithm>
+#include <cstdlib>
+#include <sstream>
 
 class Request
 {

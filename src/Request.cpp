@@ -6,14 +6,11 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:28 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/17 14:18:52 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/18 16:04:01 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Request.hpp"
-#include <algorithm>
-#include <cstdlib>
-#include <sstream>
 
 // ==============================================
 //       Constructors & Destructors
@@ -135,6 +132,25 @@ bool Request::parse(const std::string& data)
 {
 	// Add incoming data to the buffer
 	_buffer += data;
+
+	/*
+	// DEBUG: Print buffer contents (first 200 chars)
+	*/
+	#ifdef DEBUG
+	std::cout << "  [Request] Buffer size: " << _buffer.size()
+				<< ", State: " << _state << std::endl;
+	if (_buffer.size() > 0 && _buffer.size() <= 200) {
+		std::cout << "  [Request] Buffer: [";
+		for (size_t i = 0; i < _buffer.size(); i++) {
+			char c = _buffer[i];
+			if (c == '\r') std::cout << "\\r";
+			else if (c == '\n') std::cout << "\\n";
+			else if (c >= 32 && c < 127) std::cout << c;
+			else std::cout << "\\x" << std::hex << (int)(unsigned char)c << std::dec;
+		}
+		std::cout << "]" << std::endl;
+	}
+	#endif
 
 	// ==============================
 	// 	PARSE_REQUEST_LINE State
@@ -724,6 +740,16 @@ bool Request::parseChunkedBody()
 		// Extract chunk size line (without \r\n)
 		std::string chunkSizeLine = _buffer.substr(0, crlfPos);
 
+		// Handle empty line - this is the final CRLF after "0\r\n"
+		// This happens when we've already processed the "0" chunk size
+		// and now receive just "\r\n"
+		if (chunkSizeLine.empty())
+		{
+			// This is the final CRLF - chunked body is complete!
+			_buffer.erase(0, 2);  // Remove the \r\n
+			return true;
+		}
+
 		// Remove chunk size line from buffer (including \r\n)
 		_buffer.erase(0, crlfPos + 2);
 
@@ -777,27 +803,23 @@ bool Request::parseChunkedBody()
 		*/
 		if (chunkSize == 0)
 		{
-			// Last chunk! Check for final CRLF
-			if (_buffer.size() < 2)
+			// Last chunk! Now we need to wait for the final CRLF
+			// Check if it's already in the buffer
+			if (_buffer.size() >= 2)
 			{
-				// Need more data for final CRLF
-				return false;
+				if (_buffer.substr(0, 2) != "\r\n")
+				{
+					_state = PARSE_ERROR;
+					_errorCode = 400;
+					return false;
+				}
+				_buffer.erase(0, 2);
+				return true;  // Chunked body complete!
 			}
-
-			// Verify final CRLF exists
-			if (_buffer.substr(0, 2) != "\r\n")
-			{
-				_state = PARSE_ERROR;
-				_errorCode = 400; // Bad Request
-				return false;
-			}
-
-			// Remove final CRLF
-			_buffer.erase(0, 2);
-
-			// Chunked body complete!
-			// _body now contains the un-chunked data ready for processing
-			return true;
+			// Need to wait for final CRLF
+			// The next iteration will handle it when it arrives
+			// (it will be an empty chunkSizeLine which we handle above)
+			return false;
 		}
 
 		// ===================================
