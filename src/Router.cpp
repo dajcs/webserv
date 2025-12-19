@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/19 08:53:15 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/19 12:12:34 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -561,10 +561,24 @@ Response Router::handleGet(const Request& request, const LocationConfig& locatio
 	// RFC 7231: HEAD response MUST NOT contain a message body
 	if (request.getMethod() == "HEAD")
 	{
-		// Ensure Content-Length reflects what GET would return
-		// std::stringstream ss;
-		// ss << response.getBody().size();
-		// response.setHeader("Content-Length", ss.str());
+		/*
+			DEBUG: Try different status codes - change this value to test!
+			Try: 200, 204, 301, 302, 304, 400, 403, 404, 405, 500
+			./ubuntu_test - Test HEAD http://localhost:8080/
+			Subject says:
+						You need at least the GET, POST, and DELETE methods
+			It seems implementing HEAD was a mistake, because ubuntu_test expects:
+										405 Method Not Allowed
+		*/
+		#define DEBUG_HEAD_STATUS 405  // <-- CHANGE THIS VALUE TO TEST
+
+		#ifdef DEBUG
+		std::cerr << "  [DEBUG] HEAD request - forcing status code to "
+										<< DEBUG_HEAD_STATUS << std::endl;
+		#endif
+
+		response.setStatus(DEBUG_HEAD_STATUS);
+
 		// Clear the body
 		response.setBody("");
 	}
