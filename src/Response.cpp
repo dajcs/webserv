@@ -6,14 +6,11 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:39 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/14 17:49:56 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/19 08:50:30 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "Response.hpp"
-#include <sstream>
-#include <ctime>
-#include <cstring>
 
 
 /*
@@ -840,6 +837,66 @@ std::string Response::getReasonPhrase(int code)
 	}
 }
 
+
+/*
+	isTextFile() - Check if file content appears to be text
+
+	Reads the first portion of a file and checks if it contains
+	only printable ASCII characters (plus common whitespace).
+
+	This is a heuristic - not 100% accurate, but good enough
+	for determining Content-Type when extension is unknown.
+
+	Parameters:
+		filepath: Path to the file to check
+
+	Returns:
+		true if file appears to be text
+		false if file appears to be binary
+*/
+bool Response::isTextFile(const std::string& filepath)
+{
+	std::ifstream file(filepath.c_str(), std::ios::binary);
+	if (!file)
+	{
+		return false;  // Can't read file, assume binary
+	}
+
+	// Read first 512 bytes (enough to detect binary content)
+	char buffer[512];
+	file.read(buffer, sizeof(buffer));
+	std::streamsize bytesRead = file.gcount();
+	file.close();
+
+	if (bytesRead == 0)
+	{
+		return true;  // Empty file, treat as text
+	}
+
+	// Check each byte - if any non-text character found, it's binary
+	for (std::streamsize i = 0; i < bytesRead; ++i)
+	{
+		unsigned char c = static_cast<unsigned char>(buffer[i]);
+
+		// Allow printable ASCII (32-126), plus common whitespace
+		// Tab (9), Newline (10), Carriage Return (13)
+		if (c >= 9 && c <= 13)
+		{
+			continue;  // Whitespace is OK
+		}
+		if (c >= 32 && c <= 126)
+		{
+			continue;  // Printable ASCII is OK
+		}
+
+		// Found a non-text character -> binary file
+		return false;
+	}
+
+	return true;  // All characters are text-like
+}
+
+
 /*
 	getMimeType() - Get MIME type from file extension
 
@@ -853,6 +910,8 @@ std::string Response::getReasonPhrase(int code)
 
 	Security note: Always set Content-Type explicitly.
 	Browser "sniffing" can cause security issues.
+
+	Return type/subtype for known extensions, "" otherwise
 */
 std::string Response::getMimeType(const std::string& extension)
 {
@@ -911,6 +970,49 @@ std::string Response::getMimeType(const std::string& extension)
 		return "font/ttf";
 
 	// Default for unknown types
-	// application/octet-stream tells browser to download, not display
+	// Will be determined by content analysis in getMimeTypeForFile()
+	return "";
+}
+
+
+/*
+	getMimeTypeForFile() - Get MIME type with content detection fallback
+
+	First tries to determine type from extension.
+	If extension is unknown, analyzes file content to determine
+	if it's text or binary.
+
+	Parameters:
+		filepath: Full path to the file
+
+	Returns:
+		Appropriate MIME type string
+*/
+std::string Response::getMimeTypeForFile(const std::string& filepath)
+{
+	// Extract extension
+	std::string extension;
+	size_t dotPos = filepath.rfind('.');
+	if (dotPos != std::string::npos)
+	{
+		extension = filepath.substr(dotPos);
+	}
+
+	// Try to get MIME type from extension
+	std::string mimeType = getMimeType(extension);
+
+	// If extension is known, return it
+	if (!mimeType.empty())
+	{
+		return mimeType;
+	}
+
+	// Unknown extension - analyze file content
+	if (isTextFile(filepath))
+	{
+		return "text/plain";
+	}
+
+	// Default for binary files
 	return "application/octet-stream";
 }

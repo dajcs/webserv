@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:16 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/17 13:43:11 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/18 21:57:29 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -749,6 +749,28 @@ void Connection::setResponse(const Response& response)
 
 	std::cout << "  [Connection fd=" << _fd << "] Response queued ("
 			  << _writeBuffer.size() << " bytes)" << std::endl;
+
+	/*
+	// if DEBUG print first 555 chars from the response
+	*/
+	#ifdef DEBUG
+		// getting response string
+		std::string responseStr = response.getData();
+
+		std::cerr << "  [Response fd=" << _fd << "] Sending response:" << std::endl;
+		std::cerr << "  ----------------------------------------" << std::endl;
+		// Print first x chars or full response if smaller
+		std::string preview = responseStr.substr(0, std::min(responseStr.size(), (size_t)555));
+		// Replace \r\n with visible markers for debugging
+		std::string displayStr;
+		for (size_t i = 0; i < preview.size(); ++i) {
+			if (preview[i] == '\r') displayStr += "\\r";
+			else if (preview[i] == '\n') displayStr += "\\n\n";
+			else displayStr += preview[i];
+		}
+		std::cerr << displayStr << std::endl;
+		std::cerr << "  ----------------------------------------" << std::endl;
+	#endif
 }
 
 

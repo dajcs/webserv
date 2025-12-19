@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/17 10:27:24 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/19 08:53:15 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -481,7 +481,7 @@ bool Router::isMethodAllowed(const std::string& method, const LocationConfig& lo
 	// If no methods specified, allow GET (alternatively can allow all)
 	if (location.allowed_methods.empty())
 	{
-		// Default behaviour: allow GET only
+		// Default behaviour: allow GET/HEAD only
 		return (method == "GET" || method == "HEAD");
 	}
 
@@ -544,14 +544,32 @@ Response Router::handleGet(const Request& request, const LocationConfig& locatio
 		return errorResponse (404);
 	}
 
+	Response response;
+
 	// Check if it's a directory
 	if (S_ISDIR(pathStat.st_mode))
 	{
-		return serveDirectory(path, location);
+		response = serveDirectory(path, location);
+	}
+	else
+	{
+		// It's a file - serve it
+		response = serveFile(path);
 	}
 
-	// It's a file - serve it
-	return serveFile(path);
+	// For HEAD requests, keep headers but remove body
+	// RFC 7231: HEAD response MUST NOT contain a message body
+	if (request.getMethod() == "HEAD")
+	{
+		// Ensure Content-Length reflects what GET would return
+		// std::stringstream ss;
+		// ss << response.getBody().size();
+		// response.setHeader("Content-Length", ss.str());
+		// Clear the body
+		response.setBody("");
+	}
+
+	return response;
 }
 
 
@@ -1069,13 +1087,17 @@ Response Router::serveFile(const std::string& filepath)
 		extension = filepath.substr(dotPos);
 	}
 
-	std::string contentType = Response::getMimeType(extension);
+	// Use getMimeTypeForFile for content-based detection
+	std::string contentType = Response::getMimeTypeForFile(filepath);
+	std::string body = contents.str();
 
 	// Build response
 	Response response;
 	response.setStatus(200, "OK");
 	response.setContentType(contentType);
-	response.setBody(contents.str());
+	response.setContentLength(body.size());  // Explicitly set Content-Length
+	response.setBody(body);
+	response.addStandardHeaders();
 
 	return response;
 }
