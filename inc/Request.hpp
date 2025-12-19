@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:13 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/18 15:37:50 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/19 16:01:02 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -86,7 +86,7 @@ class Request
 		std::string _buffer;
 		size_t _contentLength;
 		size_t _bodyBytesRead;
-
+		size_t _expectedChunkSize;  // 0 = reading size line, >0 = reading chunk data
 		bool parseRequestLine(const std::string& line);
 		bool parseHeader(const std::string& line);
 		bool parseChunkedBody();

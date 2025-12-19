@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:28 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/18 16:04:01 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/19 16:16:58 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -38,7 +38,8 @@ Request::Request() :
 	_errorCode(0),
 	_buffer(""),
 	_contentLength(0),
-	_bodyBytesRead(0)
+	_bodyBytesRead(0),
+	_expectedChunkSize(0)
 {}
 
 // Destructor
@@ -57,7 +58,8 @@ Request::Request(const Request& other) :
 	_errorCode(other._errorCode),
 	_buffer(other._buffer),
 	_contentLength(other._contentLength),
-	_bodyBytesRead(other._bodyBytesRead)
+	_bodyBytesRead(other._bodyBytesRead),
+	_expectedChunkSize(other._expectedChunkSize)
 {}
 
 // copy assignment operator
@@ -77,6 +79,7 @@ Request& Request::operator=(const Request& other)
 		_buffer = other._buffer;
 		_contentLength = other._contentLength;
 		_bodyBytesRead = other._bodyBytesRead;
+		_expectedChunkSize = other._expectedChunkSize;
 	}
 	return *this;
 }
@@ -111,6 +114,7 @@ void Request::reset()
 	_errorCode = 0;
 	_contentLength = 0;
 	_bodyBytesRead = 0;
+	_expectedChunkSize = 0;
 }
 
 
@@ -278,7 +282,7 @@ bool Request::parse(const std::string& data)
 
 					// TODO: Check against client_max_body_size from config
 					// For now, use a default limit of 1MB
-					if(_contentLength > 10485760) // 1MB
+					if(_contentLength > 1048576) // 1MB
 					{
 						_state = PARSE_ERROR;
 						_errorCode = 413; // Payload Too Large
@@ -713,6 +717,46 @@ bool Request::parseChunkedBody()
 
 	while (true)
 	{
+
+		// ===========================================
+		//  If we're waiting for chunk data, read it
+		// ===========================================
+		if (_expectedChunkSize > 0)
+		{
+			// We need: _expectedChunkSize bytes + "\r\n" (2 bytes)
+			size_t totalNeeded = _expectedChunkSize + 2;
+
+			if (_buffer.size() < totalNeeded)
+			{
+				// Don't have complete chunk yet, need more data
+				return false;
+			}
+
+			// Extract chunk data (without trailing \r\n)
+			std::string chunkData = _buffer.substr(0, _expectedChunkSize);
+
+			// Verify trailing CRLF after chunk data
+			if (_buffer.substr(_expectedChunkSize, 2) != "\r\n")
+			{
+				_state = PARSE_ERROR;
+				_errorCode = 400; // Bad Request - malformed chunk
+				return false;
+			}
+
+			// Remove chunk data + trailing CRLF from buffer
+			_buffer.erase(0, totalNeeded);
+
+			// Append chunk to body
+			_body.append(chunkData);
+
+			// Reset expected size - ready to read next chunk size line
+			_expectedChunkSize = 0;
+
+			// Continue loop to parse next chunk
+			continue;
+		}
+
+
 		// =================================
 		//  Step 1: Parse Chunk Size Line
 		// =================================
@@ -760,16 +804,36 @@ bool Request::parseChunkedBody()
 		// Example: "1A" -> 26, "FF" -> 255, "0" -> 0
 
 		// Validate hex string (only 0-9, A-F, a-f allowed)
+		// Chunk size line can include ";extension=value" after the hex number
+		// e.g., "5f5e100;ext=val\r\n"
+
+		// First, strip any chunk extensions (everything after semicolon)
+		size_t semicolonPos = chunkSizeLine.find(';');
+		if (semicolonPos != std::string::npos)
+		{
+			chunkSizeLine = chunkSizeLine.substr(0, semicolonPos);
+		}
+
+		// Trim whitespace
+		while (!chunkSizeLine.empty() && (chunkSizeLine[0] == ' ' || chunkSizeLine[0] == '\t'))
+		{
+			chunkSizeLine = chunkSizeLine.substr(1);
+		}
+		while (!chunkSizeLine.empty() && (chunkSizeLine[chunkSizeLine.length()-1] == ' ' || chunkSizeLine[chunkSizeLine.length()-1] == '\t'))
+		{
+			chunkSizeLine = chunkSizeLine.substr(0, chunkSizeLine.length()-1);
+		}
+
+		// Now validate hex characters
 		for (size_t i = 0; i < chunkSizeLine.length(); i++)
 		{
 			char c = chunkSizeLine[i];
-			if (!(	(c >= '0' && c <= '9') ||
+			if (!((c >= '0' && c <= '9') ||
 					(c >= 'A' && c <= 'F') ||
 					(c >= 'a' && c <= 'f')))
 			{
-				// Invalid character in chunk size
 				_state = PARSE_ERROR;
-				_errorCode = 400; // Bad Request
+				_errorCode = 400;
 				return false;
 			}
 		}
@@ -833,51 +897,20 @@ bool Request::parseChunkedBody()
 				Client sends: 1000000\r\n<1MB data>\r\n1000000\r\n<1MB data>...
 				Without limit, serer runs out of memory
 		*/
-		if (_body.size() + chunkSize > 1048576) // 1MB limit
+		if (_body.size() + chunkSize > 104857600) // 100MB limit for chunked
 		{
 			_state = PARSE_ERROR;
 			_errorCode = 413; // Payload Too Large
 			return false;
 		}
 
-		// ==========================
-		//  Step 5: Read Chunk Data
-		// ==========================
-		// We need: chunkSize bytes + "\r\n" (2 bytes)
-		size_t totalNeeded = chunkSize + 2;
+		// ==========================================
+		//  Step 5: Store expected size and try read
+		// ==========================================
+		_expectedChunkSize = chunkSize;
 
-		if (_buffer.size() < totalNeeded)
-		{
-			// Don't have complete chunk yet, need more data
-			return false;
-		}
-
-		// Extract chunk data (without trailing \r\n)
-		std::string chunkData = _buffer.substr(0, chunkSize);
-
-		// Verify trailing CRLF after chunk data
-		if (_buffer.substr(chunkSize, 2) !="\r\n")
-		{
-			_state = PARSE_ERROR;
-			_errorCode = 400; // Bad Request - malformed chunk
-			return false;
-		}
-
-		// Remove chunk data + trailing CRLF from buffer
-		_buffer.erase(0, totalNeeded);
-
-		// ================================
-		//  Step 6: Append chunk to Body
-		// ================================
-		/*
-			Un-chunking process:
-			We remove the chunk framing (size + CRLF) and just add raw data
-		*/
-		_body.append(chunkData);
-
-		// Loop continues to parse next chunk
-		// Will return false if buffer empty (need more data)
-		// Will return true when we hit the "0\r\n\r\n" final chunk
+		// Loop will continue and try to read the chunk data
+		// If not enough data, it will return false and resume later
 
 	} // end of while(true)
 
