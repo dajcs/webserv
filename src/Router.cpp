@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/19 12:12:34 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/19 12:19:33 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -356,24 +356,41 @@ const LocationConfig* Router::findLocation(const ServerConfig& server,
 
 	for (size_t i = 0; i < locations.size(); i++)
 	{
-		const std::string& locationPath = locations[i].path;
+		std::string locationPath = locations[i].path;
 
-		// check if location path is a prefix of the request path
-		// location "/api" should match "/api", "/api/", "/api/users"
-		if (path.compare(0, locationPath.length(), locationPath) == 0)
+		// Normalize: remove trailing slash from location for comparison
+		// "/directory/" becomes "/directory" for matching purposes
+		std::string normalizedLocation = locationPath;
+		if (normalizedLocation.length() > 1 &&
+			normalizedLocation[normalizedLocation.length() - 1] == '/')
+		{
+			normalizedLocation = normalizedLocation.substr(0, normalizedLocation.length() - 1);
+		}
+
+		// Also normalize request path
+		std::string normalizedPath = path;
+		if (normalizedPath.length() > 1 &&
+			normalizedPath[normalizedPath.length() - 1] == '/')
+		{
+			normalizedPath = normalizedPath.substr(0, normalizedPath.length() - 1);
+		}
+
+		// Check if location path is a prefix of the request path
+		if (normalizedPath.compare(0, normalizedLocation.length(), normalizedLocation) == 0)
 		{
 			// Additional check: ensure we match at path boundary
 			// "/api" should NOT match "/apiary"
-			// it should match: "/api", "/api/", "/api"
-			if (path.length() == locationPath.length() ||	// Exact match
-				path[locationPath.length()] == '/' ||		// NOT "/apiary"
-				locationPath == "/")						// Root always matches
+			// it should match: "/api", "/api/", "/api/users"
+			if (normalizedPath.length() == normalizedLocation.length() ||	// Exact match
+				normalizedPath[normalizedLocation.length()] == '/' ||		// Prefix match
+				normalizedLocation == "/")									// Root always matches
 			{
-				// if better than prevous matches, store it
-				if (locationPath.length() > bestMatchLength)
+				// Use original location path length for specificity
+				// (but normalized length for comparison)
+				if (normalizedLocation.length() > bestMatchLength)
 				{
 					bestMatch = &locations[i];
-					bestMatchLength = locationPath.length();
+					bestMatchLength = normalizedLocation.length();
 				}
 			}
 		}
