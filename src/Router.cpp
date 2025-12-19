@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/19 12:19:33 by anemet           ###   ########.fr       */
+/*   Updated: 2025/12/19 13:20:27 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -405,87 +405,80 @@ const LocationConfig* Router::findLocation(const ServerConfig& server,
 // =======================================
 
 /*
-	resolvePath()  -  Convert URI to filesystem path
+	resolvePath()  -  Convert URI path to filesystem path
+
+	This function takes the request URI and the matched location config,
+	then produces the actual filesystem path.
 
 	Example:
-		Location config:
-			location /images {
-				root /var/www;
-			}
+		Location: /directory/
+		Root: ./YoupiBanane
+		Request: /directory/Yeah/file.txt
 
-		Request: GET /images/photo.jpg
-		Resolved: /var/www/images/photo.jpg
+		We strip "/directory" from the request, leaving "/Yeah/file.txt"
+		Then append to root: "./YoupiBanane/Yeah/file.txt"
 
-	SECURITY: Must prevent directory traversal attacks!
-		Request: GET /images/../../../etc/passwd
-		BAD: /var/www/images/../../../etc/passwd = /etc/passwd
-		GOOD: Detect ".." and reject or sanitize
-
-	Input:
-		uri:	 	the request URI path
-		location:	the matching location configuration
-	Return:
-		Absolute filesystem path to the requested resource
+	Input: request path (URI), location config
+	Return: filesystem path
 */
-std::string Router::resolvePath(const std::string& uri, const LocationConfig& location)
+std::string Router::resolvePath(const std::string& requestPath,
+									const LocationConfig& location)
 {
 	std::string root = location.root;
+	std::string locationPath = location.path;
 
-	// Ensure root doesn't end with /
+	// Remove trailing slash from location path for stripping
+	// "/directory/" -> "/directory"
+	if (locationPath.length() > 1 &&
+		locationPath[locationPath.length() - 1] == '/')
+	{
+		locationPath = locationPath.substr(0, locationPath.length() - 1);
+	}
+
+	// Remove trailing slash from root if present
 	if (!root.empty() && root[root.length() - 1] == '/')
 	{
 		root = root.substr(0, root.length() - 1);
 	}
 
-	std::string path = uri;
-
-	// Security: Sanitize path by removing ".." components
-	std::string sanitized;
-	std::stringstream ss(path);
-	std::string segment;
-	std::vector<std::string> segments;
-
-	// Split path by '/' and process
-	while (std::getline(ss, segment, '/'))
+	// Strip the location prefix from the request path
+	// Request: /directory/Yeah/file.txt
+	// Location: /directory
+	// Remainder: /Yeah/file.txt
+	std::string remainder;
+	if (requestPath.length() > locationPath.length())
 	{
-		if (segment == "..")
-		{
-			// Go up one directory - but don't go above root!
-			if (!segments.empty())
-			{
-				segments.pop_back();
-			}
-			// If segments is empty, we'd be going above root - ignore
-		}
-		else if (segment == "." || segment.empty())
-		{
-			// current directory or empty segment - skip
-			continue;
-		}
-		else
-		{
-			segments.push_back(segment);
-		}
+		remainder = requestPath.substr(locationPath.length());
+	}
+	else if (requestPath == locationPath || requestPath == locationPath + "/")
+	{
+		remainder = "/";  // Requesting the location itself
+	}
+	else
+	{
+		remainder = "/";
 	}
 
-	// Rebuild sanitized path
-	sanitized = "";
-	for (size_t i = 0; i < segments.size(); ++i)
+	// Ensure remainder starts with /
+	if (remainder.empty() || remainder[0] != '/')
 	{
-		sanitized += "/" + segments[i];
+		remainder = "/" + remainder;
 	}
 
-	if (sanitized.empty())
-	{
-		sanitized = "/";
-	}
+	// Combine root + remainder
+	// ./YoupiBanane + /Yeah/file.txt = ./YoupiBanane/Yeah/file.txt
+	std::string fullPath = root + remainder;
 
-	// combine root with sanitized path
-	std::string fullPath = root + sanitized;
+	#ifdef DEBUG
+	std::cerr << "  [resolvePath] location: " << location.path
+				<< ", root: " << location.root
+				<< ", request: " << requestPath
+				<< ", remainder: " << remainder
+				<< ", result: " << fullPath << std::endl;
+	#endif
 
 	return fullPath;
 }
-
 
 /*
 	isMethodAllowed  -  check if HTTP method is permitted for this location
@@ -1219,7 +1212,7 @@ Response Router::serveDirectory(const std::string& dirpath, const LocationConfig
 	if (!location.autoindex)
 	{
 		// Autoindex disabled - don't reveal directory contents
-		return errorResponse(403);  // Forbidden
+		return errorResponse(404);  // changed from 403 Forbidden to 404 Not Found
 	}
 
 	/*
