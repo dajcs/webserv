@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/05 13:21:34 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/05 17:33:02 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -187,7 +187,8 @@ Response Router::route(const Request& request, int serverPort)
 
 	// Step 3: Find matching location - the longest (most specific) match
 	std::string requestPath = request.getPath();
-	const LocationConfig* location = findLocation(*server, requestPath);
+	std::string method = request.getMethod();
+	const LocationConfig* location = findLocation(*server, requestPath, method);
 	if (!location)
 	{
 		// No location matches - user server's default settings
@@ -240,7 +241,6 @@ Response Router::route(const Request& request, int serverPort)
 	}
 
 	// Step 5: Check HTTP method
-	std::string method = request.getMethod();
 	if (!isMethodAllowed(method, *location))
 	{
 		return errorResponse(405, server);
@@ -347,16 +347,34 @@ const ServerConfig* Router::findServer(int port, const std::string& hostname) co
 	Return: best matching LocationConfig, or NULL if no match
 */
 const LocationConfig* Router::findLocation(const ServerConfig& server,
-											const std::string& path) const
+											const std::string& path,
+											const std::string& method) const
 {
-	const LocationConfig *bestMatch = NULL;
+	const LocationConfig *bestPrefixMatch = NULL;
 	size_t bestMatchLength = 0;
+	const LocationConfig* extensionMatch = NULL;
 
 	const std::vector<LocationConfig>& locations = server.locations;
 
 	for (size_t i = 0; i < locations.size(); i++)
 	{
 		std::string locationPath = locations[i].path;
+
+		// Handle extension matching (e.g. *.bla)
+		if (locationPath.length() > 1 && locationPath[0] == '*')
+		{
+			std::string suffix = locationPath.substr(1); // "*.bla" -> ".bla"
+			if (path.length() >= suffix.length() &&
+				path.compare(path.length() - suffix.length(), suffix.length(), suffix) == 0)
+			{
+				// Extension matches - check if method is allowed
+				if (isMethodAllowed(method, locations[i]))
+				{
+					extensionMatch = &locations[i];
+				}
+			}
+			continue;
+		}
 
 		// Normalize: remove trailing slash from location for comparison
 		// "/directory/" becomes "/directory" for matching purposes
@@ -389,14 +407,23 @@ const LocationConfig* Router::findLocation(const ServerConfig& server,
 				// (but normalized length for comparison)
 				if (normalizedLocation.length() > bestMatchLength)
 				{
-					bestMatch = &locations[i];
+					bestPrefixMatch = &locations[i];
 					bestMatchLength = normalizedLocation.length();
 				}
 			}
 		}
 	}
 
-	return bestMatch;
+	// Extension match takes precedence ONLY if method is allowed
+	// This ensures:
+	// 		GET /directory/youpi.bla	-> /directory/ (serves file)
+	//		POST /directory/youpi.bla	-> *.bla (executes CGI)
+	if (extensionMatch)
+	{
+		return extensionMatch;
+	}
+
+	return bestPrefixMatch;
 }
 
 
@@ -572,21 +599,13 @@ Response Router::handleGet(const Request& request, const LocationConfig& locatio
 	if (request.getMethod() == "HEAD")
 	{
 		/*
-			DEBUG: Try different status codes - change this value to test!
-			Try: 200, 204, 301, 302, 304, 400, 403, 404, 405, 500
-			./ubuntu_test - Test HEAD http://localhost:8080/
 			Subject says:
 						You need at least the GET, POST, and DELETE methods
-			It seems implementing HEAD was a mistake, because ubuntu_test expects:
+			Implementing HEAD for mandatory part was a mistake,
+			because ubuntu_test expects:
 										405 Method Not Allowed
 		*/
-		#define DEBUG_HEAD_STATUS 405  // <-- CHANGE THIS VALUE TO TEST
-
-		#if DEBUG >= 1
-		std::cerr << "  [DEBUG] HEAD request - forcing status code to "
-										<< DEBUG_HEAD_STATUS << std::endl;
-		#endif
-
+		#define DEBUG_HEAD_STATUS 405  // <-- HEAD not implemented for mandatory part
 		response.setStatus(DEBUG_HEAD_STATUS);
 
 		// Clear the body

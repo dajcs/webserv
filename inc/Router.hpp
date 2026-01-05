@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:30 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/17 10:14:39 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/05 17:30:43 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -83,13 +83,14 @@ private:
 	// ================================
 	const ServerConfig* findServer(int port, const std::string& hostname = "") const;
 	const LocationConfig* findLocation(const ServerConfig& server,
-										const std::string& path) const;
+										const std::string& path,
+										const std::string& method) const;
 
 	// ================================
 	//  Path Resolution
 	// ================================
 	std::string resolvePath(const std::string& uri, const LocationConfig& location);
-	bool isMethodAllowed(const std::string& method, const LocationConfig& location);
+	static bool isMethodAllowed(const std::string& method, const LocationConfig& location);
 	bool isCgiRequest(const std::string& path, const LocationConfig& location);
 
 	// ================================

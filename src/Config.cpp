@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:03 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/18 14:21:58 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/05 16:37:49 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -84,6 +84,8 @@ ServerConfig::ServerConfig() :
 
 	This is NGINX way of working and we're replicating that behaviour.
 */
+
+/*
 const LocationConfig* ServerConfig::findLocation(const std::string &uri) const
 {
 	const LocationConfig* bestMatch = NULL;
@@ -92,6 +94,18 @@ const LocationConfig* ServerConfig::findLocation(const std::string &uri) const
 	for (size_t i = 0; i < locations.size(); ++i)
 	{
 		const std::string& locPath = locations[i].path;
+
+		// Handle extension matching (e.g. *.bla)
+		if (locPath.length() > 1 && locPath[0] == '*')
+		{
+			std::string suffix = locPath.substr(1);
+			if (uri.length() >= suffix.length() &&
+				uri.compare(uri.length() - suffix.length(), suffix.length(), suffix) == 0)
+			{
+				return &locations[i];
+			}
+			continue;
+		}
 
 		// Check if this location's path is a prefix of the requested URI
 		// Example: locPath = "/api" matches uri = "/api/users" but not "/apix"
@@ -117,9 +131,9 @@ const LocationConfig* ServerConfig::findLocation(const std::string &uri) const
 	}
 	return bestMatch;
 }
+*/
 
-
-//===========================================
+ //===========================================
 //	Config Implementation
 //===========================================
 
