@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:28 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/19 16:16:58 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/05 13:15:29 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -138,9 +138,9 @@ bool Request::parse(const std::string& data)
 	_buffer += data;
 
 	/*
-	// DEBUG: Print buffer contents (first 200 chars)
+	// DEBUG >= 2: Print buffer contents (first 200 chars)
 	*/
-	#ifdef DEBUG
+	#if DEBUG >= 2
 	std::cout << "  [Request] Buffer size: " << _buffer.size()
 				<< ", State: " << _state << std::endl;
 	if (_buffer.size() > 0 && _buffer.size() <= 200) {

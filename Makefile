@@ -6,7 +6,7 @@
 #    By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2025/10/21 19:46:34 by anemet            #+#    #+#              #
-#    Updated: 2025/12/17 21:53:58 by anemet           ###   ########.fr        #
+#    Updated: 2026/01/05 13:14:15 by anemet           ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -23,10 +23,15 @@ CXX = g++
 # make DEBUG=1 to compile for debugging enabled
 CXXFLAGS = -Wall -Wextra -Werror -std=c++98 -fPIE -I $(INCDIR)
 
-ifeq ($(DEBUG),1)
-    CXXFLAGS += -g -O0 -DDEBUG
-else
+# DEBUG default to 0
+DEBUG ?= 0
+CXXFLAGS += -DDEBUG=$(DEBUG)
+
+# Optimize only if DEBUG == 0
+ifeq ($(DEBUG),0)
     CXXFLAGS += -O2
+else
+    CXXFLAGS += -g -O0
 endif
 
 # The name of the executable

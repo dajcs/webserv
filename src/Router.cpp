@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/19 13:20:27 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/05 13:21:34 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -469,7 +469,7 @@ std::string Router::resolvePath(const std::string& requestPath,
 	// ./YoupiBanane + /Yeah/file.txt = ./YoupiBanane/Yeah/file.txt
 	std::string fullPath = root + remainder;
 
-	#ifdef DEBUG
+	#if DEBUG >= 1
 	std::cerr << "  [resolvePath] location: " << location.path
 				<< ", root: " << location.root
 				<< ", request: " << requestPath
@@ -582,7 +582,7 @@ Response Router::handleGet(const Request& request, const LocationConfig& locatio
 		*/
 		#define DEBUG_HEAD_STATUS 405  // <-- CHANGE THIS VALUE TO TEST
 
-		#ifdef DEBUG
+		#if DEBUG >= 1
 		std::cerr << "  [DEBUG] HEAD request - forcing status code to "
 										<< DEBUG_HEAD_STATUS << std::endl;
 		#endif

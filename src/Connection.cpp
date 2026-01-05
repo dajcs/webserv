@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:16 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/18 21:57:29 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/05 13:19:50 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -753,7 +753,7 @@ void Connection::setResponse(const Response& response)
 	/*
 	// if DEBUG print first 555 chars from the response
 	*/
-	#ifdef DEBUG
+	#if DEBUG >= 1
 		// getting response string
 		std::string responseStr = response.getData();
 
