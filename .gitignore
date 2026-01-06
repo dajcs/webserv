@@ -5,3 +5,5 @@ webserv
 */*.o
 www/uploads/*
 www/large.bin
+*/a.out
+a.out
