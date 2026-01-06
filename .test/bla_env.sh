@@ -1,0 +1,21 @@
+export CONTENT_LENGTH=100000000
+export CONTENT_TYPE=test/file
+export GATEWAY_INTERFACE=CGI/1.1
+export HTTP_ACCEPT_ENCODING=gzip
+export HTTP_HOST=localhost:8080
+export HTTP_TRANSFER_ENCODING=chunked
+export HTTP_USER_AGENT=Go-http-client/1.1
+export PATH_INFO=/directory/youpi.bla
+export QUERY_STRING=
+export REDIRECT_STATUS=200
+export REMOTE_ADDR=127.0.0.1
+export REMOTE_HOST=127.0.0.1
+export REQUEST_METHOD=POST
+export REQUEST_URI=/directory/youpi.bla
+export SCRIPT_FILENAME=directory/youpi.bla
+export SCRIPT_NAME=
+export SERVER_NAME=localhost
+export SERVER_PORT=8080
+export SERVER_PROTOCOL=HTTP/1.1
+export SERVER_SOFTWARE=webserv/1.0
+

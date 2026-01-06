@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/05 17:33:02 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/06 09:56:37 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -453,6 +453,30 @@ std::string Router::resolvePath(const std::string& requestPath,
 {
 	std::string root = location.root;
 	std::string locationPath = location.path;
+
+	// Handle extension matching (e.g., *.bla)
+	// For extension locations, we use the full request path, not stripping anything
+	if (locationPath.length() > 1 && locationPath[0] == '*')
+	{
+		// Remove trailing slash from root if present
+		if (!root.empty() && root[root.length() - 1] == '/')
+		{
+			root = root.substr(0, root.length() - 1);
+		}
+
+		// For extension matching, the request path IS the file path
+		// with the root prepended
+		std::string fullPath = root + requestPath;
+
+		#if DEBUG >= 1
+		std::cerr << " [resolvePath] extension match, location: " << location.path
+					<< ", root: " << location.root
+					<< ", request: " << requestPath
+					<< ", result: " << fullPath << std::endl;
+		#endif
+
+		return fullPath;
+	}
 
 	// Remove trailing slash from location path for stripping
 	// "/directory/" -> "/directory"

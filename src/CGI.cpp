@@ -6,13 +6,14 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:56:09 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/17 14:21:29 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/06 16:12:19 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "CGI.hpp"
 #include "Request.hpp"
 #include "Config.hpp"
+#include <poll.h>
 
 /*
 	==================================
@@ -144,8 +145,9 @@ CGI& CGI::operator=(const CGI& other)
 	isCgiRequest() - Determine if a request should be handled as CGI
 
 	Detection logic:
-	1. Check if location has CGI configured (both extension and path must be set)
-	2. Check if the file path ends with the configured extension
+	1. Check if location has CGI configured (cgi_path must be set)
+	2. For extension-based locations (*.bla), the location pattern IS the extension
+	3. For regular locations, check if file ends with cgi_extension
 
 	Example:
 		Location config:
@@ -167,14 +169,36 @@ CGI& CGI::operator=(const CGI& other)
 */
 bool CGI::isCgiRequest(const std::string& path, const LocationConfig& location)
 {
-	// Step 1: Check if CGI is configured for this location
-	// Both extension and interpreter path must be set
-	if (location.cgi_extension.empty() || location.cgi_path.empty())
+	// 1. Must have an interpreter configured
+	if (location.cgi_path.empty())
 	{
 		return false;
 	}
 
-	// Step 2: Check if path ends with the CGI extension
+	// 2. Check if this is an extension-based location (e.g., "*.bla")
+	// In this case, the location path pattern defines what files match
+	if (location.path.length() > 1 && location.path[0] == '*')
+	{
+		// The location pattern like "*.bla" means all files are CGI
+		// If we matched this location, it's a CGI request
+		std::string extension = location.path.substr(1); // "*.bla" -> ".bla"
+
+		// Verify the path actually ends with this extension
+		if (path.length() >= extension.length() &&
+			path.compare(path.length() - extension.length(), extension.length(), extension) == 0)
+		{
+			return true;
+		}
+		return false;
+	}
+
+	// 3. Regular location with explicit cgi_extension
+	if (location.cgi_extension.empty())
+	{
+		return false;
+	}
+
+	// Check if path ends with the CGI extension
 	const std::string& ext = location.cgi_extension;
 
 	// Path must longer than the extension
@@ -235,71 +259,90 @@ bool CGI::setup(const std::string& scriptPath)
 		return false;
 	}
 
-	// =========================================
-	//  Step 1: Validate the CGI script
-	// =========================================
-	/*
-		The script must:
-		1. Exist on the filesystem
-		2. Be a regular file (not a directory or special file)
-		3. Have execute permission
+	// Check if this is an extension-based location (*.bla)
+	// In this case, cgi_path is the EXECUTABLE itself, not an interpreter
+	bool isExtensionLocation = (_location->path.length() > 1 && _location->path[0] == '*');
 
-		Common errors:
-		- 404 if script doesn't exist
-		- 403 if script isn't executable
-	*/
-	if (!validateScript(scriptPath))
+	if (isExtensionLocation)
 	{
-		// Error code and message set by validateScript()
-		return false;
-	}
-	_scriptPath = scriptPath;
+		// For extension locations, cgi_path IS the CGI executable
+		// The scriptPath is passed as environment variable, not as argument
+		_interpreterPath = _location->cgi_path;
+		_scriptPath = scriptPath;
 
-	// =========================================
-	//  Step 2: Validate the CGI interpreter
-	// =========================================
-	/*
-		The interpreter is the program that runs the script:
-		- Python scripts: /usr/bin/python3
-		- PHP scripts: /usr/bin/php-cgi
-		- Perl scripts: /usr/bin/perl
+		if (!validateInterpreter(_interpreterPath))
+		{
+			return false;
+		}
 
-		The interpreter must exist and be executable.
-	*/
-	_interpreterPath = _location->cgi_path;
-	if (!validateInterpreter(_interpreterPath))
-	{
-		// Error code and message set by validateInterpreter()
-		return false;
-	}
-
-	// =========================================
-	//  Step 3: Determine working directory
-	// =========================================
-	/*
-		CGI scripts should run in their own directory so that
-		relative file paths work correctly.
-
-		Example:
-			Script: /var/www/cgi-bin/process.py
-			Working dir: /var/www/cgi-bin/
-
-		If the script does: open("data.txt")
-		It will look for: /var/www/cgi-bin/data.txt
-	*/
-	size_t lastSlash = _scriptPath.rfind('/');
-	if (lastSlash != std::string::npos)
-	{
-		_workingDirectory = _scriptPath.substr(0, lastSlash);
+		// Working directory: where the CGI executable is
+		size_t lastSlash = _interpreterPath.rfind('/');
+		if (lastSlash != std::string:: npos)
+		{
+			_workingDirectory = _interpreterPath.substr(0, lastSlash);
+			if (_workingDirectory.empty())
+					_workingDirectory = ".";
+		}
+		else
+		{
+			_workingDirectory = ".";
+		}
 	}
 	else
+		// Regular CGI: interpreter runs the script
 	{
-		_workingDirectory = ".";
+		//  Step 1: Validate the CGI script
+		/*
+			The script must:
+			1. Exist on the filesystem
+			2. Be a regular file (not a directory or special file)
+			3. Have execute permission
+		*/
+		if (!validateScript(scriptPath))
+		{
+			// Error code and message set by validateScript()
+			return false;
+		}
+		_scriptPath = scriptPath;
+
+		//  Step 2: Validate the CGI interpreter
+		/*
+			The interpreter is the program that runs the script:
+			- Python scripts: /usr/bin/python3
+			- PHP scripts: /usr/bin/php-cgi
+			- Perl scripts: /usr/bin/perl
+		*/
+		_interpreterPath = _location->cgi_path;
+		if (!validateInterpreter(_interpreterPath))
+		{
+			// Error code and message set by validateInterpreter()
+			return false;
+		}
+
+		//  Step 3: Determine working directory
+		/*
+			CGI scripts should run in their own directory so that
+			relative file paths work correctly.
+
+			Example:
+				Script: /var/www/cgi-bin/process.py
+				Working dir: /var/www/cgi-bin/
+
+			If the script does: open("data.txt")
+			It will look for: /var/www/cgi-bin/data.txt
+		*/
+		size_t lastSlash = _scriptPath.rfind('/');
+		if (lastSlash != std::string::npos)
+		{
+			_workingDirectory = _scriptPath.substr(0, lastSlash);
+		}
+		else
+		{
+			_workingDirectory = ".";
+		}
 	}
 
-	// =========================================
 	//  Step 4: Extract PATH_INFO
-	// =========================================
 	/*
 		PATH_INFO is extra path information after the script name.
 		This allows scripts to handle virtual paths.
@@ -314,14 +357,10 @@ bool CGI::setup(const std::string& scriptPath)
 	*/
 	_pathInfo = extractPathInfo();
 
-	// =========================================
 	//  Step 5: Build environment variables
-	// =========================================
 	buildEnvironment();
 
-	// =========================================
 	//  Success!
-	// =========================================
 	_ready = true;
 	return true;
 }
@@ -436,6 +475,11 @@ bool CGI::validateInterpreter(const std::string& path)
 		Request: /cgi-bin/app.py/api/users/123
 		Extension: .py
 		Result: /api/users/123
+
+	For extension-based locations (*.bla):
+		Request: /directory/youpi.bla/extra/path
+		Extension: .bla
+		Result: /extra/path
 */
 std::string CGI::extractPathInfo() const
 {
@@ -446,6 +490,12 @@ std::string CGI::extractPathInfo() const
 
 	std::string requestPath = _request->getPath();
 	const std::string& ext = _location->cgi_extension;
+
+	// Check if this is an extension-based location (e.g., "*.bla")
+	if (_location->path.length() > 1 && _location->path[0] == '*')
+	{
+		return requestPath;
+	}
 
 	// Find the extension in the path
 	size_t extPos = requestPath.find(ext);
@@ -840,6 +890,24 @@ void CGI::addHttpHeaders()
 
 		_envVars[envName] = value;
 	}
+
+	#if DEBUG >= 1
+	std::cerr << "  [CGI] Environment variables:" << std::endl;
+	for (std::map<std::string, std::string>::const_iterator it = _envVars.begin();
+		it != _envVars.end(); ++it)
+	{
+		// Don't print full body content in env vars
+		if (it->second.length() > 100)
+		{
+			std::cerr << "    " << it->first << "=" << it->second.substr(0, 100) << "..." << std::endl;
+		}
+		else
+		{
+			std::cerr << "    " << it->first << "=" << it->second << std::endl;
+		}
+	}
+	#endif
+
 }
 
 
@@ -955,6 +1023,33 @@ void CGI::freeEnvArray(char** envArray)
 */
 char** CGI::getArgv() const
 {
+	// Check if this is an extension-based location
+	bool isExtensionLocation = (_location && _location->path.length() > 1 &&
+														_location->path[0] == '*');
+
+	if (isExtensionLocation)
+	{
+		// For extension locations (*.bla), the CGI executable runs directly
+		// argv[0] = executable path
+		// argv[1] = NULL
+		char** argv = static_cast<char**>(malloc(sizeof(char*) * 2));
+		if (!argv)
+			return NULL;
+
+		argv[0] = static_cast<char*>(malloc(_interpreterPath.length() + 1));
+		if (!argv[0])
+		{
+			free(argv);
+			return NULL;
+		}
+		std::strcpy(argv[0], _interpreterPath.c_str());
+
+		argv[1] = NULL;
+		return argv;
+	}
+
+	// Regular CGI: interpreter + script
+
 	// Allocate array: interpreter + script + NULL
 	char** argv = static_cast<char**>(malloc(sizeof(char*) * 3));
 	if (!argv)
@@ -1598,8 +1693,8 @@ bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
 	if (!_ready)
 	{
 		result.success = false;
-		// result.statusCode = 500;
-		// result.errorMessage = "CGI not ready - setup() was not called or failed";
+		result.statusCode = 500;
+		result.errorMessage = "CGI not ready - setup() was not called or failed";
 		return result;
 	}
 
@@ -1713,7 +1808,7 @@ bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
 			if (chdir(_workingDirectory.c_str()) == -1)
 			{
 				// Non-fatal: script might work anyway with absolute paths
-				// But log this somehow in production
+				// Might be helpful to log this somehow if code is on production
 			}
 		}
 
@@ -1764,21 +1859,72 @@ bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
 	//  Step 3: Write Request Body to Child
 	// =========================================
 	const std::string& requestBody = getRequestBody();
+
+	#if DEBUG >= 1
+	std::cerr << "  [CGI] Request body size: " << requestBody.size() << " bytes" << std::endl;
+	if (requestBody.size() > 0 && requestBody.size() <= 1000)
+	{
+		std::cerr << "  [CGI] Request body (first 500 chars): ["
+				<< requestBody.substr(0, 500) << "]" << std::endl;
+	}
+	else if (requestBody.size() > 1000)
+	{
+		std::cerr << "  [CGI] Request body preview (first 200 chars): ["
+				<< requestBody.substr(0, 200) << "]..." << std::endl;
+		std::cerr << "  [CGI] Request body preview (last 200 chars): [..."
+				<< requestBody.substr(requestBody.size() - 200) << "]" << std::endl;
+	}
+	#endif
+
+
 	if (!requestBody.empty())
 	{
-		/*
-			Write POST body to CGI's stdin.
+		// Set write end to non-blocking to avoid hanging on large bodies
+		setNonBlocking(stdin_pipe[1]);
 
-			In production, we should:
-			1. Handle partial writes (EAGAIN)
-			2. Use poll() to avoid blocking
-			3. Handle SIGPIPE if child dies
+		size_t totalWritten = 0;
+		size_t bodySize = requestBody.size();
+		const char* bodyData = requestBody.c_str();
 
-			For simplicity, we do a simple blocking write here.
-			The timeout mechanism will catch hung writes.
-		*/
-		ssize_t written = write(stdin_pipe[1], requestBody.c_str(), requestBody.size());
-		(void)written;  // Ignore for now
+		while (totalWritten < bodySize)
+		{
+			struct pollfd pfd;
+			pfd.fd = stdin_pipe[1];
+			pfd.events = POLLOUT;
+			pfd.revents = 0;
+
+			int pollResult = poll(&pfd, 1, timeout * 1000);
+
+			if (pollResult == 0)
+			{
+				// Timeout writing to CGI
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+				close(stdout_pipe[0]);
+				stdout_pipe[0] = -1;
+				cleanupChild(pid);
+
+				result.success = false;
+				result.statusCode = 504;
+				result.errorMessage = "Timeout writing request body to CGI";
+				return result;
+			}
+			else if (pollResult < 0)
+			{
+				break;  // Error, stop writing
+			}
+
+			ssize_t written = write(stdin_pipe[1], bodyData + totalWritten,
+									bodySize - totalWritten);
+			if (written > 0)
+			{
+				totalWritten += written;
+			}
+			else if (written == -1 && errno != EAGAIN && errno != EWOULDBLOCK)
+			{
+				break;  // Write error
+			}
+		}
 	}
 
 	// Close write end to signal EOF to child
@@ -1792,166 +1938,195 @@ bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
 
 	std::string cgiOutput;
 	char buffer[4096];
+	int timeoutMs = timeout * 1000;  // Convert to milliseconds
 	time_t startTime = time(NULL);
-	bool timedOut = false;
-	bool childExited = false;
 
-	while (!childExited)
+	while (true)
 	{
-		// Check timeout
-		if (time(NULL) - startTime >= timeout)
+		// Calculate remaining timeout
+		time_t elapsed = time(NULL) - startTime;
+		int remainingMs = timeoutMs - (elapsed * 1000);
+
+		if (remainingMs <= 0)
 		{
-			timedOut = true;
-			break;
+			// Timeout reached
+			close(stdout_pipe[0]);
+			stdout_pipe[0] = -1;
+			cleanupChild(pid);
+
+			result.success = false;
+			result.statusCode = 504;
+			std::ostringstream oss;
+			oss << "CGI script execution timed out after " << timeout << " seconds";
+			result.errorMessage = oss.str();
+			return result;
 		}
 
-		// Check if child has exited
-		int status;
-		pid_t waitResult = waitpid(pid, &status, WNOHANG);
+		// Use poll() for proper timeout handling
+		struct pollfd pfd;
+		pfd.fd = stdout_pipe[0];
+		pfd.events = POLLIN;
+		pfd.revents = 0;
 
-		if (waitResult == pid)
+		int pollResult = poll(&pfd, 1, remainingMs > 1000 ? 1000 : remainingMs);
+
+		if (pollResult == 0)
 		{
-			// Child has exited
-			childExited = true;
+			// poll timeout - check if child has exited
+			int status;
+			pid_t waitResult = waitpid(pid, &status, WNOHANG);
 
-			// Read any remaining output
-			while (true)
+			if (waitResult == pid)
 			{
-				ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer) - 1);
-				if (bytesRead > 0)
+				// Child exited, read any remaining data
+				while (true)
 				{
-					cgiOutput.append(buffer, bytesRead);
+					ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer) - 1);
+					if (bytesRead > 0)
+					{
+						cgiOutput.append(buffer, bytesRead);
+					}
+					else
+					{
+						break;
+					}
 				}
-				else
-				{
-					break;
-				}
-			}
 
-			// Check exit status
-			if (!WIFEXITED(status))
-			{
-				// Child was killed by a signal
 				close(stdout_pipe[0]);
 				stdout_pipe[0] = -1;
 
-				result.success = false;
-				result.statusCode = 500;
+				// Check exit status
+				if (!WIFEXITED(status))
+				{
+					result.success = false;
+					result.statusCode = 500;
 
-				if (WIFSIGNALED(status))
-				{
-					int sig = WTERMSIG(status);
-					std::ostringstream oss;
-					oss << "CGI script killed by signal " << sig;
-					result.errorMessage = oss.str();
+					if (WIFSIGNALED(status))
+					{
+						int sig = WTERMSIG(status);
+						std::ostringstream oss;
+						oss << "CGI script killed by signal " << sig;
+						result.errorMessage = oss.str();
+					}
+					else
+					{
+						result.errorMessage = "CGI script terminated abnormally";
+					}
+					return result;
 				}
-				else
+
+				int exitCode = WEXITSTATUS(status);
+				if (exitCode == 2 && cgiOutput.empty())
 				{
-					result.errorMessage = "CGI script terminated abnormally";
+					result.success = false;
+					result.statusCode = 500;
+					result.errorMessage = "Failed to execute CGI interpreter";
+					return result;
 				}
-				return result;
+
+				break;  // Exit read loop, we have all output
 			}
 
-			int exitCode = WEXITSTATUS(status);
-			if (exitCode == 2 && cgiOutput.empty())
+			// Child still running, continue polling
+			continue;
+		}
+		else if (pollResult < 0)
+		{
+			if (errno == EINTR)
 			{
-				// Exit code 2 = execve failed
+				continue;  // Interrupted by signal, retry
+			}
+			// Poll error
+			close(stdout_pipe[0]);
+			stdout_pipe[0] = -1;
+			cleanupChild(pid);
+
+			result.success = false;
+			result.statusCode = 500;
+			result.errorMessage = "poll() error reading CGI output: ";
+			result.errorMessage += strerror(errno);
+			return result;
+		}
+
+		// Data available or pipe closed
+		if (pfd.revents & (POLLIN | POLLHUP))
+		{
+			ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer) - 1);
+
+			if (bytesRead > 0)
+			{
+				cgiOutput.append(buffer, bytesRead);
+			}
+			else if (bytesRead == 0)
+			{
+				// EOF - child closed stdout
 				close(stdout_pipe[0]);
 				stdout_pipe[0] = -1;
 
-				result.success = false;
-				result.statusCode = 500;
-				result.errorMessage = "Failed to execute CGI interpreter";
-				return result;
-			}
+				// Wait for child to fully exit
+				int status;
+				waitpid(pid, &status, 0);
 
-			break;
-		}
-		else if (waitResult == -1 && errno != ECHILD)
-		{
-			// Unexpected error
-			break;
-		}
+				if (!WIFEXITED(status))
+				{
+					result.success = false;
+					result.statusCode = 500;
 
-		// Try to read from pipe
-		ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer) - 1);
+					if (WIFSIGNALED(status))
+					{
+						int sig = WTERMSIG(status);
+						std::ostringstream oss;
+						oss << "CGI script killed by signal " << sig;
+						result.errorMessage = oss.str();
+					}
+					else
+					{
+						result.errorMessage = "CGI script terminated abnormally";
+					}
+					return result;
+				}
 
-		if (bytesRead > 0)
-		{
-			cgiOutput.append(buffer, bytesRead);
-		}
-		else if (bytesRead == 0)
-		{
-			// EOF - child closed stdout
-			// Wait for child to fully exit
-			waitpid(pid, &status, 0);
-			childExited = true;
-		}
-		else
-		{
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-			{
-				usleep(10000);  // 10ms
-				continue;
+				break;  // Exit read loop
 			}
 			else
 			{
+				// bytesRead < 0
+				if (errno == EAGAIN || errno == EWOULDBLOCK)
+				{
+					continue;
+				}
 				// Read error
-				break;
+				close(stdout_pipe[0]);
+				stdout_pipe[0] = -1;
+				cleanupChild(pid);
+
+				result.success = false;
+				result.statusCode = 500;
+				result.errorMessage = "Error reading CGI output: ";
+				result.errorMessage += strerror(errno);
+				return result;
 			}
+		}
+
+		if (pfd.revents & POLLERR)
+		{
+			// Error on pipe
+			close(stdout_pipe[0]);
+			stdout_pipe[0] = -1;
+			cleanupChild(pid);
+
+			result.success = false;
+			result.statusCode = 500;
+			result.errorMessage = "Pipe error while reading CGI output";
+			return result;
 		}
 	}
 
-	// Close read end
-	close(stdout_pipe[0]);
-	stdout_pipe[0] = -1;
-
 	// =========================================
-	//  Step 5: Handle Timeout
-	// =========================================
-	if (timedOut)
-	{
-		/*
-			CGI Timeout (504 Gateway Timeout)
-			---------------------------------
-			The CGI script took too long to respond.
-
-			This could mean:
-			- Script has an infinite loop
-			- Script is waiting for a resource (DB, network)
-			- Script is doing heavy computation
-
-			We must kill the process to prevent resource exhaustion.
-		*/
-		cleanupChild(pid);
-
-		result.success = false;
-		result.statusCode = 504;
-		result.errorMessage = "CGI script execution timed out after ";
-		std::ostringstream oss;
-		oss << timeout;
-		result.errorMessage += oss.str();
-		result.errorMessage += " seconds";
-		return result;
-	}
-
-	// =========================================
-	//  Step 6: Validate Output
+	//  Step 5: Validate Output
 	// =========================================
 	if (cgiOutput.empty())
 	{
-		/*
-			Empty Output (500 Internal Server Error)
-			----------------------------------------
-			The CGI script produced no output at all.
-
-			Possible causes:
-			- Script crashed immediately
-			- Script has syntax error (Python/PHP parse error)
-			- Script exited without printing anything
-
-			All indicate a broken script -> 500
-		*/
 		result.success = false;
 		result.statusCode = 500;
 		result.errorMessage = "CGI script produced no output";
@@ -1959,11 +2134,10 @@ bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
 	}
 
 	// =========================================
-	//  Step 7: Parse CGI Output
+	//  Step 6: Parse CGI Output
 	// =========================================
 	if (!parseCgiOutput(cgiOutput, result))
 	{
-		// parseCgiOutput sets error info (502 Bad Gateway)
 		return result;
 	}
 

@@ -486,3 +486,430 @@ Content-Length: 460\r\n
   Client closed (remaining: 0)
 
 
+---
+
+
+# TIMEOUT
+
+I see the problem. The timeout mechanism is broken because the `waitpid()` call with `WNOHANG` in the read loop doesn't properly handle the case when the child is still running. Also, the `time()` comparison is using `>=` which means it checks for `timeout` seconds exactly, but the loop continues blocking on `usleep()` calls.
+
+The main issue is that your read loop with non-blocking I/O and `usleep(10000)` is essentially busy-waiting, but the timeout check `time(NULL) - startTime >= timeout` uses seconds, which is too coarse-grained.
+
+Here's a fixed version using `poll()` for proper timeout handling:
+
+````cpp
+// ...existing code...
+
+#include <poll.h>  // Add this include at the top with other includes
+
+// ...existing code...
+
+CGI::CGIResult CGI::execute(int timeout)
+{
+	CGIResult result;
+
+	// Initialize pipe FDs to -1 (invalid) for safe cleanup
+	int stdin_pipe[2] = {-1, -1};
+	int stdout_pipe[2] = {-1, -1};
+
+	// =========================================
+	//  Pre-flight Checks
+	// =========================================
+	if (!_ready)
+	{
+		result.success = false;
+		result.statusCode = 500;
+		result.errorMessage = "CGI not ready - setup() was not called or failed";
+		return result;
+	}
+
+	// =========================================
+	//  Step 1: Create Pipes for Communication
+	// =========================================
+	if (pipe(stdin_pipe) == -1)
+	{
+		result.success = false;
+		result.statusCode = 500;
+		result.errorMessage = "Failed to create stdin pipe: ";
+		result.errorMessage += strerror(errno);
+		return result;
+	}
+
+	if (pipe(stdout_pipe) == -1)
+	{
+		closePipes(stdin_pipe, NULL);
+		result.success = false;
+		result.statusCode = 500;
+		result.errorMessage = "Failed to create stdout pipe: ";
+		result.errorMessage += strerror(errno);
+		return result;
+	}
+
+	// =========================================
+	//  Step 2: Fork Child Process
+	// =========================================
+	pid_t pid = fork();
+
+	if (pid == -1)
+	{
+		closePipes(stdin_pipe, stdout_pipe);
+		result.success = false;
+		result.statusCode = 500;
+		result.errorMessage = "Failed to fork process: ";
+		result.errorMessage += strerror(errno);
+		return result;
+	}
+
+	// =========================================
+	//  Child Process (pid == 0)
+	// =========================================
+	if (pid == 0)
+	{
+		// Redirect stdin to read from pipe
+		if (dup2(stdin_pipe[0], STDIN_FILENO) == -1)
+		{
+			_exit(1);
+		}
+
+		// Redirect stdout to write to pipe
+		if (dup2(stdout_pipe[1], STDOUT_FILENO) == -1)
+		{
+			_exit(1);
+		}
+
+		// Close all pipe FDs (we have copies at 0 and 1 now)
+		close(stdin_pipe[0]);
+		close(stdin_pipe[1]);
+		close(stdout_pipe[0]);
+		close(stdout_pipe[1]);
+
+		// Change to script directory
+		if (!_workingDirectory.empty())
+		{
+			if (chdir(_workingDirectory.c_str()) == -1)
+			{
+				// Non-fatal: script might work anyway with absolute paths
+			}
+		}
+
+		// Prepare argv and envp
+		char** argv = getArgv();
+		char** envp = getEnvArray();
+
+		if (!argv || !envp)
+		{
+			if (argv) freeArgv(argv);
+			if (envp) freeEnvArray(envp);
+			_exit(1);
+		}
+
+		// Execute the CGI interpreter
+		execve(_interpreterPath.c_str(), argv, envp);
+
+		// If we get here, execve failed
+		freeArgv(argv);
+		freeEnvArray(envp);
+		_exit(2);
+	}
+
+	// =========================================
+	//  Parent Process (pid > 0)
+	// =========================================
+
+	// Close pipe ends we don't need
+	close(stdin_pipe[0]);
+	stdin_pipe[0] = -1;
+	close(stdout_pipe[1]);
+	stdout_pipe[1] = -1;
+
+	// =========================================
+	//  Step 3: Write Request Body to Child
+	// =========================================
+	const std::string& requestBody = getRequestBody();
+	if (!requestBody.empty())
+	{
+		// Set write end to non-blocking to avoid hanging on large bodies
+		setNonBlocking(stdin_pipe[1]);
+		
+		size_t totalWritten = 0;
+		size_t bodySize = requestBody.size();
+		const char* bodyData = requestBody.c_str();
+		
+		while (totalWritten < bodySize)
+		{
+			struct pollfd pfd;
+			pfd.fd = stdin_pipe[1];
+			pfd.events = POLLOUT;
+			pfd.revents = 0;
+			
+			int pollResult = poll(&pfd, 1, timeout * 1000);
+			
+			if (pollResult == 0)
+			{
+				// Timeout writing to CGI
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+				close(stdout_pipe[0]);
+				stdout_pipe[0] = -1;
+				cleanupChild(pid);
+				
+				result.success = false;
+				result.statusCode = 504;
+				result.errorMessage = "Timeout writing request body to CGI";
+				return result;
+			}
+			else if (pollResult < 0)
+			{
+				break;  // Error, stop writing
+			}
+			
+			ssize_t written = write(stdin_pipe[1], bodyData + totalWritten, 
+									bodySize - totalWritten);
+			if (written > 0)
+			{
+				totalWritten += written;
+			}
+			else if (written == -1 && errno != EAGAIN && errno != EWOULDBLOCK)
+			{
+				break;  // Write error
+			}
+		}
+	}
+
+	// Close write end to signal EOF to child
+	close(stdin_pipe[1]);
+	stdin_pipe[1] = -1;
+
+	// =========================================
+	//  Step 4: Read CGI Output with Timeout
+	// =========================================
+	setNonBlocking(stdout_pipe[0]);
+
+	std::string cgiOutput;
+	char buffer[4096];
+	int timeoutMs = timeout * 1000;  // Convert to milliseconds
+	time_t startTime = time(NULL);
+
+	while (true)
+	{
+		// Calculate remaining timeout
+		time_t elapsed = time(NULL) - startTime;
+		int remainingMs = timeoutMs - (elapsed * 1000);
+		
+		if (remainingMs <= 0)
+		{
+			// Timeout reached
+			close(stdout_pipe[0]);
+			stdout_pipe[0] = -1;
+			cleanupChild(pid);
+			
+			result.success = false;
+			result.statusCode = 504;
+			std::ostringstream oss;
+			oss << "CGI script execution timed out after " << timeout << " seconds";
+			result.errorMessage = oss.str();
+			return result;
+		}
+
+		// Use poll() for proper timeout handling
+		struct pollfd pfd;
+		pfd.fd = stdout_pipe[0];
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+
+		int pollResult = poll(&pfd, 1, remainingMs > 1000 ? 1000 : remainingMs);
+
+		if (pollResult == 0)
+		{
+			// poll timeout - check if child has exited
+			int status;
+			pid_t waitResult = waitpid(pid, &status, WNOHANG);
+			
+			if (waitResult == pid)
+			{
+				// Child exited, read any remaining data
+				while (true)
+				{
+					ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer) - 1);
+					if (bytesRead > 0)
+					{
+						cgiOutput.append(buffer, bytesRead);
+					}
+					else
+					{
+						break;
+					}
+				}
+				
+				close(stdout_pipe[0]);
+				stdout_pipe[0] = -1;
+
+				// Check exit status
+				if (!WIFEXITED(status))
+				{
+					result.success = false;
+					result.statusCode = 500;
+
+					if (WIFSIGNALED(status))
+					{
+						int sig = WTERMSIG(status);
+						std::ostringstream oss;
+						oss << "CGI script killed by signal " << sig;
+						result.errorMessage = oss.str();
+					}
+					else
+					{
+						result.errorMessage = "CGI script terminated abnormally";
+					}
+					return result;
+				}
+
+				int exitCode = WEXITSTATUS(status);
+				if (exitCode == 2 && cgiOutput.empty())
+				{
+					result.success = false;
+					result.statusCode = 500;
+					result.errorMessage = "Failed to execute CGI interpreter";
+					return result;
+				}
+				
+				break;  // Exit read loop, we have all output
+			}
+			
+			// Child still running, continue polling
+			continue;
+		}
+		else if (pollResult < 0)
+		{
+			if (errno == EINTR)
+			{
+				continue;  // Interrupted by signal, retry
+			}
+			// Poll error
+			close(stdout_pipe[0]);
+			stdout_pipe[0] = -1;
+			cleanupChild(pid);
+			
+			result.success = false;
+			result.statusCode = 500;
+			result.errorMessage = "poll() error reading CGI output: ";
+			result.errorMessage += strerror(errno);
+			return result;
+		}
+
+		// Data available or pipe closed
+		if (pfd.revents & (POLLIN | POLLHUP))
+		{
+			ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer) - 1);
+
+			if (bytesRead > 0)
+			{
+				cgiOutput.append(buffer, bytesRead);
+			}
+			else if (bytesRead == 0)
+			{
+				// EOF - child closed stdout
+				close(stdout_pipe[0]);
+				stdout_pipe[0] = -1;
+				
+				// Wait for child to fully exit
+				int status;
+				waitpid(pid, &status, 0);
+				
+				if (!WIFEXITED(status))
+				{
+					result.success = false;
+					result.statusCode = 500;
+
+					if (WIFSIGNALED(status))
+					{
+						int sig = WTERMSIG(status);
+						std::ostringstream oss;
+						oss << "CGI script killed by signal " << sig;
+						result.errorMessage = oss.str();
+					}
+					else
+					{
+						result.errorMessage = "CGI script terminated abnormally";
+					}
+					return result;
+				}
+				
+				break;  // Exit read loop
+			}
+			else
+			{
+				// bytesRead < 0
+				if (errno == EAGAIN || errno == EWOULDBLOCK)
+				{
+					continue;
+				}
+				// Read error
+				close(stdout_pipe[0]);
+				stdout_pipe[0] = -1;
+				cleanupChild(pid);
+				
+				result.success = false;
+				result.statusCode = 500;
+				result.errorMessage = "Error reading CGI output: ";
+				result.errorMessage += strerror(errno);
+				return result;
+			}
+		}
+
+		if (pfd.revents & POLLERR)
+		{
+			// Error on pipe
+			close(stdout_pipe[0]);
+			stdout_pipe[0] = -1;
+			cleanupChild(pid);
+			
+			result.success = false;
+			result.statusCode = 500;
+			result.errorMessage = "Pipe error while reading CGI output";
+			return result;
+		}
+	}
+
+	// =========================================
+	//  Step 5: Validate Output
+	// =========================================
+	if (cgiOutput.empty())
+	{
+		result.success = false;
+		result.statusCode = 500;
+		result.errorMessage = "CGI script produced no output";
+		return result;
+	}
+
+	// =========================================
+	//  Step 6: Parse CGI Output
+	// =========================================
+	if (!parseCgiOutput(cgiOutput, result))
+	{
+		return result;
+	}
+
+	// =========================================
+	//  Success!
+	// =========================================
+	result.success = true;
+	return result;
+}
+
+// ...existing code...
+````
+
+Key changes:
+
+1. **Uses `poll()` with timeout** - Instead of `usleep()` busy-waiting, we use `poll()` which properly blocks until data is available OR timeout expires.
+
+2. **Handles writing large request bodies** - For POST requests with large bodies (like your 100MB test), we now use `poll()` on the write side too with timeout.
+
+3. **Proper timeout calculation** - We track remaining time and pass it to `poll()`.
+
+4. **Handles `POLLHUP`** - When the child closes its stdout, we get `POLLHUP` and handle it properly.
+
+5. **Added `#include <poll.h>`** - Make sure this is included at the top of the file.
+
+The timeout should now work correctly and the server won't block indefinitely.
