@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:03 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/16 10:19:17 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/07 23:09:13 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -400,6 +400,28 @@ bool handleWriteComplete();
 	const Request* getRequest() const;
 
 	/*
+		setMaxBodySize() - Set max body size from server config
+
+		Called by Server after accepting a connection to set the
+		server-level body size limit. This is propagated to the
+		Request object for parsing validation.
+	*/
+	void setMaxBodySize(size_t maxSize);
+
+	/*
+		needsMaxBodySizeUpdate() - Check if max body size needs location-based update
+
+		Returns true if headers are complete and we haven't yet updated
+		the max body size based on the matched location.
+	*/
+	bool needsMaxBodySizeUpdate() const;
+
+	/*
+		markMaxBodySizeUpdated() - Mark that location-based max body size has been set
+	*/
+	void markMaxBodySizeUpdated();
+
+	/*
 		shouldKeepAlive() - Check if connection should stay open
 
 		Returns:
@@ -458,6 +480,10 @@ private:
 	std::string			_readBuffer;    // Incoming data from client
 	std::string			_writeBuffer;   // Outgoing data to client
 	size_t				_writeOffset;   // How much of writeBuffer has been sent
+
+	// Max body size from server config (preserved across keep-alive requests)
+	size_t				_maxBodySize;   // Maximum allowed request body size
+	bool				_maxBodySizeUpdated;  // Track if location-based size has been set
 
 	// HTTP Request object
 	Request*			_request;       // Parsed HTTP request (owned by Connection)

@@ -2,43 +2,43 @@
 
 ```
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLOUT 
+  Event on fd=5: EPOLLOUT
   [Connection fd=5] Sent 629 bytes (629/629)
   [Connection fd=5] Response complete!
   [Connection fd=5] Keep-alive: waiting for next request
   [Connection fd=5] Reset for next request
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 26 bytes (buffer now: 26 bytes)
   [Request] Buffer size: 26, State: 0
   [Request] Buffer: [GET /directory/Yeah/not_ha]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 94 bytes (buffer now: 94 bytes)
   [Request] Buffer size: 120, State: 0
   [Request] Buffer: [GET /directory/Yeah/not_happy.bad_extension HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: Go-http-client/1.1\r\nAccept-Encod]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 7 bytes (buffer now: 7 bytes)
   [Request] Buffer size: 19, State: 1
   [Request] Buffer: [Accept-Encoding: gz]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 20, State: 1
   [Request] Buffer: [Accept-Encoding: gzi]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 21, State: 1
   [Request] Buffer: [Accept-Encoding: gzip]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 3 bytes (buffer now: 3 bytes)
   [Request] Buffer size: 24, State: 1
   [Request] Buffer: [Accept-Encoding: gzip\r\n\r]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 2, State: 1
   [Request] Buffer: [\r\n]
@@ -61,164 +61,164 @@ content of Yeah/not_happy.bad_extension\n
 
   ----------------------------------------
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLOUT 
+  Event on fd=5: EPOLLOUT
   [Connection fd=5] Sent 187 bytes (187/187)
   [Connection fd=5] Response complete!
   [Connection fd=5] Keep-alive: waiting for next request
   [Connection fd=5] Reset for next request
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 130 bytes (buffer now: 130 bytes)
   [Request] Buffer size: 130, State: 0
   [Request] Buffer: [POST /directory/youpi.bla HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: Go-http-client/1.1\r\nTransfer-Encoding: chunked\r\nContent-Type]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 18 bytes (buffer now: 18 bytes)
   [Request] Buffer size: 30, State: 1
   [Request] Buffer: [Content-Type: test/file\r\nAccep]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 6, State: 1
   [Request] Buffer: [Accept]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 12 bytes (buffer now: 12 bytes)
   [Request] Buffer size: 18, State: 1
   [Request] Buffer: [Accept-Encoding: g]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 4 bytes (buffer now: 4 bytes)
   [Request] Buffer size: 22, State: 1
   [Request] Buffer: [Accept-Encoding: gzip\r]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 2 bytes (buffer now: 2 bytes)
   [Request] Buffer size: 24, State: 1
   [Request] Buffer: [Accept-Encoding: gzip\r\n\r]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 2, State: 1
   [Request] Buffer: [\r\n]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1837 bytes (buffer now: 1837 bytes)
   [Request] Buffer size: 1837, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1778 bytes (buffer now: 1778 bytes)
   [Request] Buffer size: 3609, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 76 bytes (buffer now: 76 bytes)
   [Request] Buffer size: 3685, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 166 bytes (buffer now: 166 bytes)
   [Request] Buffer size: 3851, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 115 bytes (buffer now: 115 bytes)
   [Request] Buffer size: 3966, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 68 bytes (buffer now: 68 bytes)
   [Request] Buffer size: 4034, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 43 bytes (buffer now: 43 bytes)
   [Request] Buffer size: 4077, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 4078, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 6 bytes (buffer now: 6 bytes)
   [Request] Buffer size: 4084, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 2 bytes (buffer now: 2 bytes)
   [Request] Buffer size: 4086, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 4087, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 4088, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 4089, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 4090, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 8192 bytes (buffer now: 8192 bytes)
   [Request] Buffer size: 12282, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 8192 bytes (buffer now: 8192 bytes)
   [Request] Buffer size: 20474, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 2728 bytes (buffer now: 2728 bytes)
   [Request] Buffer size: 23202, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1921 bytes (buffer now: 1921 bytes)
   [Request] Buffer size: 25123, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 898 bytes (buffer now: 898 bytes)
   [Request] Buffer size: 26021, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1311 bytes (buffer now: 1311 bytes)
   [Request] Buffer size: 27332, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 5133 bytes (buffer now: 5133 bytes)
   [Request] Buffer size: 32465, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 258 bytes (buffer now: 258 bytes)
   [Request] Buffer size: 32723, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 8 bytes (buffer now: 8 bytes)
   [Request] Buffer size: 32731, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 27 bytes (buffer now: 27 bytes)
   [Request] Buffer size: 32758, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 4 bytes (buffer now: 4 bytes)
   [Request] Buffer size: 32762, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 3 bytes (buffer now: 3 bytes)
   [Request] Buffer size: 32765, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 2 bytes (buffer now: 2 bytes)
   [Request] Buffer size: 32767, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 32768, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 32769, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 32770, State: 3
 
@@ -227,49 +227,49 @@ content of Yeah/not_happy.bad_extension\n
 
 
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 172 bytes (buffer now: 172 bytes)
   [Request] Buffer size: 23453, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1290 bytes (buffer now: 1290 bytes)
   [Request] Buffer size: 24743, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 3 bytes (buffer now: 3 bytes)
   [Request] Buffer size: 24746, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 54 bytes (buffer now: 54 bytes)
   [Request] Buffer size: 24800, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 31 bytes (buffer now: 31 bytes)
   [Request] Buffer size: 24831, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 24832, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 24833, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 24834, State: 3
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 3 bytes (buffer now: 3 bytes)
   [Request] Buffer size: 3, State: 3
   [Request] Buffer: [0\r\n]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 1, State: 3
   [Request] Buffer: [\r]
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 2, State: 3
   [Request] Buffer: [\r\n]
@@ -302,13 +302,13 @@ Content-Length: 478\r\n
     <h1>4
   ----------------------------------------
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLOUT 
+  Event on fd=5: EPOLLOUT
   [Connection fd=5] Sent 656 bytes (656/656)
   [Connection fd=5] Response complete!
   [Connection fd=5] Keep-alive: waiting for next request
   [Connection fd=5] Reset for next request
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Client disconnected (EOF)
   Closing client fd=5
   Client closed (remaining: 0)
@@ -322,14 +322,14 @@ Content-Length: 478\r\n
 
 ```console
 
-./ubuntu_tester http://localhost:8080              
+./ubuntu_tester http://localhost:8080
 Welcome in this little webserver tester.
 Passing the test here is the minimum before going to an evaluation.
 
 press enter to continue
 
 THIS TEST IS NOT MEANT TO BE THE ONLY TEST IN THE EVALUATION!!!
-	
+
 press enter to continue
 
 Before starting please follow the next few steps (files content can be anything and will be shown to you by the test):
@@ -390,7 +390,7 @@ curl -v -X POST -H "Transfer-Encoding: chunked" -d "test data" http://localhost:
 ```
 
 ### Debugging Tip
-If these commands return **405**, the `findLocation` logic is failing to match `*.bla`. You can add a temporary debug print 
+If these commands return **405**, the `findLocation` logic is failing to match `*.bla`. You can add a temporary debug print
 
 
 
@@ -439,7 +439,7 @@ FATAL ERROR ON LAST TEST: bad status code
 
 
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Received 1 bytes (buffer now: 1 bytes)
   [Request] Buffer size: 2, State: 3
   [Request] Buffer: [\r\n]
@@ -474,13 +474,13 @@ Content-Length: 460\r\n
     <p>For
   ----------------------------------------
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLOUT 
+  Event on fd=5: EPOLLOUT
   [Connection fd=5] Sent 629 bytes (629/629)
   [Connection fd=5] Response complete!
   [Connection fd=5] Keep-alive: waiting for next request
   [Connection fd=5] Reset for next request
 [epoll] 1 event(s) ready
-  Event on fd=5: EPOLLIN 
+  Event on fd=5: EPOLLIN
   [Connection fd=5] Client disconnected (EOF)
   Closing client fd=5
   Client closed (remaining: 0)
@@ -630,20 +630,20 @@ CGI::CGIResult CGI::execute(int timeout)
 	{
 		// Set write end to non-blocking to avoid hanging on large bodies
 		setNonBlocking(stdin_pipe[1]);
-		
+
 		size_t totalWritten = 0;
 		size_t bodySize = requestBody.size();
 		const char* bodyData = requestBody.c_str();
-		
+
 		while (totalWritten < bodySize)
 		{
 			struct pollfd pfd;
 			pfd.fd = stdin_pipe[1];
 			pfd.events = POLLOUT;
 			pfd.revents = 0;
-			
+
 			int pollResult = poll(&pfd, 1, timeout * 1000);
-			
+
 			if (pollResult == 0)
 			{
 				// Timeout writing to CGI
@@ -652,7 +652,7 @@ CGI::CGIResult CGI::execute(int timeout)
 				close(stdout_pipe[0]);
 				stdout_pipe[0] = -1;
 				cleanupChild(pid);
-				
+
 				result.success = false;
 				result.statusCode = 504;
 				result.errorMessage = "Timeout writing request body to CGI";
@@ -662,8 +662,8 @@ CGI::CGIResult CGI::execute(int timeout)
 			{
 				break;  // Error, stop writing
 			}
-			
-			ssize_t written = write(stdin_pipe[1], bodyData + totalWritten, 
+
+			ssize_t written = write(stdin_pipe[1], bodyData + totalWritten,
 									bodySize - totalWritten);
 			if (written > 0)
 			{
@@ -695,14 +695,14 @@ CGI::CGIResult CGI::execute(int timeout)
 		// Calculate remaining timeout
 		time_t elapsed = time(NULL) - startTime;
 		int remainingMs = timeoutMs - (elapsed * 1000);
-		
+
 		if (remainingMs <= 0)
 		{
 			// Timeout reached
 			close(stdout_pipe[0]);
 			stdout_pipe[0] = -1;
 			cleanupChild(pid);
-			
+
 			result.success = false;
 			result.statusCode = 504;
 			std::ostringstream oss;
@@ -724,7 +724,7 @@ CGI::CGIResult CGI::execute(int timeout)
 			// poll timeout - check if child has exited
 			int status;
 			pid_t waitResult = waitpid(pid, &status, WNOHANG);
-			
+
 			if (waitResult == pid)
 			{
 				// Child exited, read any remaining data
@@ -740,7 +740,7 @@ CGI::CGIResult CGI::execute(int timeout)
 						break;
 					}
 				}
-				
+
 				close(stdout_pipe[0]);
 				stdout_pipe[0] = -1;
 
@@ -772,10 +772,10 @@ CGI::CGIResult CGI::execute(int timeout)
 					result.errorMessage = "Failed to execute CGI interpreter";
 					return result;
 				}
-				
+
 				break;  // Exit read loop, we have all output
 			}
-			
+
 			// Child still running, continue polling
 			continue;
 		}
@@ -789,7 +789,7 @@ CGI::CGIResult CGI::execute(int timeout)
 			close(stdout_pipe[0]);
 			stdout_pipe[0] = -1;
 			cleanupChild(pid);
-			
+
 			result.success = false;
 			result.statusCode = 500;
 			result.errorMessage = "poll() error reading CGI output: ";
@@ -811,11 +811,11 @@ CGI::CGIResult CGI::execute(int timeout)
 				// EOF - child closed stdout
 				close(stdout_pipe[0]);
 				stdout_pipe[0] = -1;
-				
+
 				// Wait for child to fully exit
 				int status;
 				waitpid(pid, &status, 0);
-				
+
 				if (!WIFEXITED(status))
 				{
 					result.success = false;
@@ -834,7 +834,7 @@ CGI::CGIResult CGI::execute(int timeout)
 					}
 					return result;
 				}
-				
+
 				break;  // Exit read loop
 			}
 			else
@@ -848,7 +848,7 @@ CGI::CGIResult CGI::execute(int timeout)
 				close(stdout_pipe[0]);
 				stdout_pipe[0] = -1;
 				cleanupChild(pid);
-				
+
 				result.success = false;
 				result.statusCode = 500;
 				result.errorMessage = "Error reading CGI output: ";
@@ -863,7 +863,7 @@ CGI::CGIResult CGI::execute(int timeout)
 			close(stdout_pipe[0]);
 			stdout_pipe[0] = -1;
 			cleanupChild(pid);
-			
+
 			result.success = false;
 			result.statusCode = 500;
 			result.errorMessage = "Pipe error while reading CGI output";
@@ -921,7 +921,7 @@ The timeout should now work correctly and the server won't block indefinitely.
 
 
 
-# Second Attempt 
+# Second Attempt
 
 
 I see the problem! The issue is that writing 100MB to the CGI's stdin is blocking while the CGI is trying to write to stdout. This creates a **deadlock**:
@@ -946,16 +946,16 @@ We need to use `poll()` to monitor **both** the stdin write and stdout read simu
 	// =========================================
 	/*
 		CRITICAL: We must read and write at the same time!
-		
+
 		Why? Pipe buffers are limited (~64KB on Linux).
 		If the CGI produces output while we're still writing input,
 		and we don't read the output, the CGI will block on write(),
 		and we'll block on write() too = DEADLOCK.
-		
+
 		Solution: Use poll() to monitor both pipes and handle
 		whichever one is ready.
 	*/
-	
+
 	setNonBlocking(stdin_pipe[1]);
 	setNonBlocking(stdout_pipe[0]);
 
@@ -1430,10 +1430,10 @@ struct ServerConfig
     std::vector<LocationConfig> locations;
 
     ServerConfig();
-    
+
     // Get effective max body size for a location (location value if set, otherwise server value)
     size_t getMaxBodySize(const LocationConfig* loc) const;
-    
+
     // Find the best matching location for a URI
     const LocationConfig* findLocation(const std::string& uri) const;
 };
@@ -1448,11 +1448,11 @@ struct ServerConfig
 
 /*
 	getMaxBodySize: Get the effective client_max_body_size for a location
-	
+
 	Priority:
 		1. If location has client_max_body_size set (> 0), use it
 		2. Otherwise, use the server's client_max_body_size
-	
+
 	This allows location-specific overrides like:
 		location /upload { client_max_body_size 100M; }
 		location /api { client_max_body_size 1K; }
@@ -1531,10 +1531,10 @@ class Request
 {
 public:
     // ...existing code...
-    
+
     // Set the maximum allowed body size (from config)
     void setMaxBodySize(size_t maxSize);
-    
+
     // ...existing code...
 
 private:
@@ -1719,7 +1719,7 @@ if (serverConfig)
 {
     // Find the matching location
     const LocationConfig* location = serverConfig->findLocation(request.getPath());
-    
+
     // Set the max body size based on config
     size_t maxBodySize = serverConfig->getMaxBodySize(location);
     request.setMaxBodySize(maxBodySize);
@@ -1768,10 +1768,10 @@ class Request
 {
 public:
     // ...existing code...
-    
+
     // Update max body size based on config (call after headers are parsed)
     void updateMaxBodySizeFromConfig(const ServerConfig& server);
-    
+
     // ...existing code...
 };
 
@@ -1785,10 +1785,10 @@ public:
 
 /*
     updateMaxBodySizeFromConfig() - Update max body size based on server config
-    
+
     This should be called after headers are parsed, when we know the request path.
     It performs location matching and sets the appropriate max body size.
-    
+
     Priority:
         1. Location's client_max_body_size (if > 0)
         2. Server's client_max_body_size
@@ -1797,12 +1797,12 @@ void Request::updateMaxBodySizeFromConfig(const ServerConfig& server)
 {
     // Find the matching location for this request path
     const LocationConfig* location = server.findLocation(_path);
-    
+
     // Get the effective max body size
     _maxBodySize = server.getMaxBodySize(location);
-    
+
     #if DEBUG >= 1
-    std::cout << "  [Request] Updated max body size to " << _maxBodySize 
+    std::cout << "  [Request] Updated max body size to " << _maxBodySize
               << " for path: " << _path << std::endl;
     #endif
 }
@@ -1819,9 +1819,9 @@ The tricky part is that during parsing, we need to update the max body size **af
 
 /*
     parse() - Main parsing function, feeds incoming data to the request parser
-    
+
     ...existing comments...
-    
+
     The optional serverConfig parameter allows updating max body size
     based on location matching after headers are parsed.
 */
@@ -1957,11 +1957,11 @@ class Request
 {
 public:
     // ...existing code...
-    
+
     // Parse incoming data - returns true when request is complete
     // serverConfig is optional, used to get correct max body size
     bool parse(const std::string& data, const ServerConfig* serverConfig = NULL);
-    
+
     // ...existing code...
 };
 
@@ -1981,11 +1981,11 @@ ssize_t bytesRead = recv(clientFd, buffer, sizeof(buffer), 0);
 if (bytesRead > 0)
 {
     std::string data(buffer, bytesRead);
-    
+
     // Get the server config for this connection
     // (You likely already have this from when the connection was accepted)
     const ServerConfig* serverConfig = _config->getServerByHostPort(host, port);
-    
+
     // Pass server config to parse for proper max body size handling
     if (client.request.parse(data, serverConfig))
     {
@@ -2011,3 +2011,232 @@ This approach:
 4. **Works with chunked encoding too** - The `parseChunkedBody()` also uses `_maxBodySize` which is now correctly set
 
 5. **Maintains backward compatibility** - If no server config is passed, it uses the default 1MB limit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+---
+
+
+
+# Dynamic Body Size Limit implementation by AI Studio - first attempt
+============================ =========================================
+
+
+Here are the steps to implement the dynamic body size limit.
+
+### Step 1: Update `Request.cpp`
+We need to replace the hardcoded values with the class member `_maxBodySize`.
+
+**In `Request::parse` (Inside `PARSE_HEADERS` block):**
+
+Find the section handling `Content-Length` and replace the hardcoded `1048576`.
+
+```cpp
+// ... inside PARSE_HEADERS state ...
+
+				if (!contentLength.empty())
+				{
+					// Content-Length body
+					_contentLength = std::atol(contentLength.c_str());
+
+					// REPLACEMENT: Use _maxBodySize instead of hardcoded 1MB
+					if(_contentLength > _maxBodySize)
+					{
+						_state = PARSE_ERROR;
+						_errorCode = 413; // Payload Too Large
+						return true;
+					}
+
+					if (_contentLength > 0)
+// ...
+```
+
+**In `Request::parse` (Inside `PARSE_CHUNKED_BODY` block):**
+
+Find the safety check for chunked data and replace the hardcoded `104857600`.
+
+```cpp
+// ... inside PARSE_CHUNKED_BODY ...
+
+		// ===================================
+		//  Step 4: Enforce Body Size Limit
+		// ===================================
+		/*
+			Even with chunked encoding, we must limit total body size
+		*/
+		// REPLACEMENT: Use _maxBodySize instead of hardcoded 100MB
+		if (_body.size() + chunkSize > _maxBodySize)
+		{
+			_state = PARSE_ERROR;
+			_errorCode = 413; // Payload Too Large
+			return false;
+		}
+// ...
+```
+
+---
+
+### Step 2: Implement the Helper in `Router.cpp`
+
+You need a way to extract the correct size limit based on the request's **Host** (to find the Server) and **URI** (to find the Location).
+
+Add this method to **`Router.hpp`**:
+
+```cpp
+// Router.hpp
+
+public:
+    // ... existing methods ...
+
+    // Helper to determine max body size based on request headers
+    size_t getClientMaxBodySize(const Request& request, int serverPort) const;
+```
+
+Add the implementation to **`Router.cpp`**:
+
+```cpp
+// Router.cpp
+
+/*
+    getClientMaxBodySize()
+
+    Helper function to determine the effective client_max_body_size
+    without performing a full route/response generation.
+
+    Used by the Connection/Server class after headers are parsed
+    to update the Request's limit before reading the body.
+*/
+size_t Router::getClientMaxBodySize(const Request& request, int serverPort) const
+{
+    if (!_config)
+        return 1048576; // Default 1MB if no config
+
+    // 1. Find the server block
+    std::string hostHeader = request.getHeader("Host");
+    const ServerConfig* server = findServer(serverPort, hostHeader);
+
+    if (!server)
+        return 1048576; // Default fallback
+
+    // 2. Find the location block
+    std::string requestPath = request.getPath();
+    std::string method = request.getMethod();
+    const LocationConfig* location = findLocation(*server, requestPath, method);
+
+    // 3. Get the size
+    return server->getMaxBodySize(location);
+}
+```
+
+---
+
+### Step 3: How to wire it together (Integration)
+
+This is the tricky part. `Request::parse` might process headers and start processing the body in a single function call if the buffer contains both.
+
+To support **Location-specific** limits that are higher than the Server default, you have to ensure the limit is updated *exactly* when the headers are finished but before the body size is checked.
+
+Since `Request::parse` does the body size check immediately after headers (inside the same loop), you have two options. Ideally, you should perform this check in your main Server/Connection loop.
+
+**Logic for your `Connection::handleRead()` or similar function:**
+
+```cpp
+// Assuming you have:
+// Router router;
+// Request request;
+// int port;
+
+// 1. Before parsing, set the SERVER level limit (fallback)
+// This prevents attacks before we even know the URI
+const ServerConfig* defaultServer = config.getServerByHostPort("0.0.0.0", port);
+if (defaultServer) {
+    request.setMaxBodySize(defaultServer->client_max_body_size);
+}
+
+// 2. Parse the incoming data
+bool finished = request.parse(buffer);
+
+// 3. CRITICAL: Check if we just finished parsing headers
+// If the parser is now in BODY state, we should verify the Location limit.
+if (request.getState() == Request::PARSE_BODY ||
+    request.getState() == Request::PARSE_CHUNKED_BODY)
+{
+    // Retrieve the specific limit for this URI/Location
+    size_t preciseLimit = router.getClientMaxBodySize(request, port);
+
+    // Update the request
+    request.setMaxBodySize(preciseLimit);
+
+    // Re-verify Content-Length against new limit immediately
+    // (Because Request::parse might have checked against the old limit and passed,
+    //  or we want to catch it if the new limit is actually smaller).
+    if (request.getContentLength() > preciseLimit) {
+        // Handle 413 Payload Too Large manually or set error state
+    }
+}
+
+// ... proceed with processing
+```
+
+**Note on the "Chicken and Egg" problem:**
+If `Request::parse` receives the whole request (Header + Body) in one chunk, it will trigger the `413` error internally using the *old* limit before returning `true`.
+*   **Safe approach:** Ensure your `ServerConfig` limit is high enough, or modify `Request.cpp` to **not** check `Content-Length` inside `PARSE_HEADERS`, but only check it at the start of `PARSE_BODY`.
+
+To implement the **Safe Approach** inside `Request.cpp` (Recommended):
+
+1.  In `PARSE_HEADERS`: Calculate `_contentLength`, but **remove** the `if(_contentLength > _maxBodySize)` check there.
+2.  In `PARSE_BODY`: Add the check at the very top.
+
+```cpp
+// Request.cpp modification
+
+// ... inside PARSE_BODY ...
+if (_state == PARSE_BODY)
+{
+    // Check limit HERE, at the start of body processing
+    // This allows the caller to update _maxBodySize after headers are parsed
+    // but before body is consumed.
+    if (_contentLength > _maxBodySize)
+    {
+        _state = PARSE_ERROR;
+        _errorCode = 413;
+        return true;
+    }
+
+    // Calculate how many bytes we still need...
+    // ... rest of logic
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

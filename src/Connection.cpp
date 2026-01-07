@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:16 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/05 13:19:50 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/08 00:37:50 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -93,6 +93,8 @@ Connection::Connection() :
 	_readBuffer(""),
 	_writeBuffer(""),
 	_writeOffset(0),
+	_maxBodySize(1048576),  // Default 1MB
+	_maxBodySizeUpdated(false),
 	_request(NULL)
 {
 	// Invalid connection - must be properly initialized before use
@@ -124,6 +126,8 @@ Connection::Connection(int fd, const struct sockaddr_in& clientAddr, int serverP
 	_readBuffer(""),
 	_writeBuffer(""),
 	_writeOffset(0),
+	_maxBodySize(1048576),  // Default 1MB, will be set from config
+	_maxBodySizeUpdated(false),
 	_request(NULL)
 {
 	// Convert IP address from binary to string
@@ -181,6 +185,8 @@ Connection::Connection(const Connection& other) :
 	_readBuffer(other._readBuffer),
 	_writeBuffer(other._writeBuffer),
 	_writeOffset(other._writeOffset),
+	_maxBodySize(other._maxBodySize),
+	_maxBodySizeUpdated(other._maxBodySizeUpdated),
 	_request(NULL)
 {
 	// Deep copy the request object
@@ -219,6 +225,8 @@ Connection& Connection::operator=(const Connection& other)
 		_readBuffer = other._readBuffer;
 		_writeBuffer = other._writeBuffer;
 		_writeOffset = other._writeOffset;
+		_maxBodySize = other._maxBodySize;
+		_maxBodySizeUpdated = other._maxBodySizeUpdated;
 
 		// Deep copy request
 		if (other._request != NULL)
@@ -673,7 +681,23 @@ bool Connection::parseRequest()
 */
 void Connection::determineKeepAlive()
 {
-	if (!_request || !_request->isComplete())
+	if (!_request)
+	{
+		return;
+	}
+
+	// If there was a parse error, close the connection immediately
+	// The client may still be sending data (e.g., remaining chunks after 413)
+	if (_request->hasError())
+	{
+		_keepAlive = false;
+		std::cout << "  [Connection fd=" << _fd << "] Keep-alive: no (parse error)"
+				  << std::endl;
+		return;
+	}
+
+	// For normal completion, check HTTP version and Connection header
+	if (!_request->isComplete())
 	{
 		return;
 	}
@@ -738,11 +762,25 @@ void Connection::setResponse(const Response& response)
 		- Blank line: "\r\n"
 		- Body: "<html>..."
 	*/
-	_writeBuffer = response.build();
+	/*
+		If Connection already determined to close (e.g., due to parse errors),
+		we need to update the Response's Connection header before building.
+		Otherwise, use Response's keep-alive setting.
+	*/
+	if (!_keepAlive)
+	{
+		// Connection already decided to close - override Response's header
+		Response modifiableResp = response;
+		modifiableResp.setConnection(false);
+		_writeBuffer = modifiableResp.build();
+	}
+	else
+	{
+		_writeBuffer = response.build();
+		// Update keep-alive from response (response may request close)
+		_keepAlive = response.shouldKeepAlive();
+	}
 	_writeOffset = 0;
-
-	// Update keep-alive from response
-	_keepAlive = response.shouldKeepAlive();
 
 	// Change state to writing
 	_state = CONN_WRITING;
@@ -775,13 +813,15 @@ void Connection::setResponse(const Response& response)
 
 
 /*
-	hasCompleteRequest() - Check if request is fully received
+	hasCompleteRequest() - Check if request is fully received or has error
 
 	Used by Server to know when to route the request.
+	Returns true for both successful parse completion AND parse errors,
+	because in both cases we need to generate a response.
 */
 bool Connection::hasCompleteRequest() const
 {
-	return _request && _request->isComplete();
+	return _request && (_request->isComplete() || _request->hasError());
 }
 
 
@@ -830,10 +870,13 @@ void Connection::reset()
 		delete _request;
 	}
 	_request = new Request();
+	// Note: Don't call setMaxBodySize here - it enables checking too early
+	// The Server will call setMaxBodySize after location is determined
 
 	// Reset state
 	_state = CONN_READING;
 	_keepAlive = true;  // Assume keep-alive for next request
+	_maxBodySizeUpdated = false;  // Reset for next request
 
 	// Update activity timestamp
 	updateActivity();
@@ -924,6 +967,35 @@ const Request* Connection::getRequest() const
 bool Connection::shouldKeepAlive() const
 {
 	return _keepAlive;
+}
+
+void Connection::setMaxBodySize(size_t maxSize)
+{
+	_maxBodySize = maxSize;
+	// Also update the current request if it exists
+	if (_request)
+	{
+		_request->setMaxBodySize(maxSize);
+	}
+	// Note: Don't set _maxBodySizeUpdated here - that's only set by markMaxBodySizeUpdated()
+	// after the location-based update in handleClientEvent()
+}
+
+bool Connection::needsMaxBodySizeUpdate() const
+{
+	// Need to update if:
+	// 1. Headers are complete (we know the path)
+	// 2. We haven't already updated based on location
+	// 3. Request is not in error state
+	return !_maxBodySizeUpdated &&
+	       _request &&
+	       _request->headersComplete() &&
+	       !_request->hasError();
+}
+
+void Connection::markMaxBodySizeUpdated()
+{
+	_maxBodySizeUpdated = true;
 }
 
 

@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:52 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/17 14:20:24 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/07 23:09:13 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -893,6 +893,16 @@ int Server::acceptNewConnection(int listenFd)
 	Connection conn(clientFd, clientAddr, serverPort);
 	_connections[clientFd] = conn;
 
+	// Set max body size from server config for early request parsing validation
+	if (_config)
+	{
+		const ServerConfig* serverConf = _config->getServerByHostPort("0.0.0.0", serverPort);
+		if (serverConf)
+		{
+			_connections[clientFd].setMaxBodySize(serverConf->client_max_body_size);
+		}
+	}
+
 	std::cout << "  New connection from " << conn.getClientIP()
 			  << ":" << conn.getClientPort()
 			  << " (fd=" << clientFd << ", total: " << _connections.size() << ")"
@@ -957,6 +967,38 @@ bool Server::handleClientEvent(int clientFd, uint32_t events)
 		{
 			// Read failed or client disconnected
 			return false;
+		}
+
+		// Update max body size based on location if headers are complete
+		// This must happen before processing so body size checks use correct limit
+		if (conn.needsMaxBodySizeUpdate() && _config)
+		{
+			Request* request = conn.getRequest();
+			if (request)
+			{
+				// Find the server config for this connection's port
+				const ServerConfig* serverConf = _config->getServerByHostPort("0.0.0.0", conn.getServerPort());
+				if (serverConf)
+				{
+					// Find the matching location based on path and method
+					Router router(*_config);
+					const LocationConfig* location = router.findLocation(
+						*serverConf,
+						request->getPath(),
+						request->getMethod()
+					);
+
+					// Get max body size from location (falls back to server default)
+					size_t maxBodySize = serverConf->getMaxBodySize(location);
+					conn.setMaxBodySize(maxBodySize);
+
+					#if DEBUG >= 1
+					std::cout << "  [Connection fd=" << clientFd << "] Updated max body size to "
+							  << maxBodySize << " for path: " << request->getPath() << std::endl;
+					#endif
+				}
+			}
+			conn.markMaxBodySizeUpdated();
 		}
 
 		// Check if we have a complete request

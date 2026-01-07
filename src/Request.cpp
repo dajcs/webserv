@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:28 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/07 17:59:06 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/07 23:17:04 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -40,7 +40,8 @@ Request::Request() :
 	_maxBodySize(1048576),	// Default 1MB
 	_contentLength(0),
 	_bodyBytesRead(0),
-	_expectedChunkSize(0)
+	_expectedChunkSize(0),
+	_skipBodySizeCheck(true)  // Skip until location-based size is set
 {}
 
 // Destructor
@@ -61,7 +62,8 @@ Request::Request(const Request& other) :
 	_maxBodySize(other._maxBodySize),
 	_contentLength(other._contentLength),
 	_bodyBytesRead(other._bodyBytesRead),
-	_expectedChunkSize(other._expectedChunkSize)
+	_expectedChunkSize(other._expectedChunkSize),
+	_skipBodySizeCheck(other._skipBodySizeCheck)
 {}
 
 // copy assignment operator
@@ -83,6 +85,7 @@ Request& Request::operator=(const Request& other)
 		_contentLength = other._contentLength;
 		_bodyBytesRead = other._bodyBytesRead;
 		_expectedChunkSize = other._expectedChunkSize;
+		_skipBodySizeCheck = other._skipBodySizeCheck;
 	}
 	return *this;
 }
@@ -118,6 +121,7 @@ void Request::reset()
 	_contentLength = 0;
 	_bodyBytesRead = 0;
 	_expectedChunkSize = 0;
+	_skipBodySizeCheck = true;  // Reset for next request
 	// _maxBodySize: don't reset, persists for the connection
 }
 
@@ -284,9 +288,9 @@ bool Request::parse(const std::string& data)
 					// Content-Length body
 					_contentLength = std::atol(contentLength.c_str());
 
-					// TODO: Check against client_max_body_size from config
-					// For now, use a default limit of 1MB
-					if(_contentLength > 1048576) // 1MB
+					// Check against client_max_body_size from config
+					// Only check if we have location-specific config (not skipping)
+					if(!_skipBodySizeCheck && _contentLength > _maxBodySize)
 					{
 						_state = PARSE_ERROR;
 						_errorCode = 413; // Payload Too Large
@@ -901,9 +905,9 @@ bool Request::parseChunkedBody()
 				Client sends: 1000000\r\n<1MB data>\r\n1000000\r\n<1MB data>...
 				Without limit, server runs out of memory
 		*/
-		// TODO: Check against client_max_body_size from config
-		// For now, use a limit of 100MB for ubuntu_test
-		if (_body.size() + chunkSize > 104857600) // 100MB limit for chunked
+		// Check against client_max_body_size from config
+		// Only check if we have location-specific config (not skipping)
+		if (!_skipBodySizeCheck && _body.size() + chunkSize > _maxBodySize)
 		{
 			_state = PARSE_ERROR;
 			_errorCode = 413; // Payload Too Large
@@ -1035,4 +1039,36 @@ const std::string& Request::getClientIP() const
 void Request::setMaxBodySize(size_t maxSize)
 {
 	_maxBodySize = maxSize;
+	_skipBodySizeCheck = false;  // Now we have location-based size, enable checking
+
+	// If we already have body data, check it now
+	if (_bodyBytesRead > _maxBodySize || _body.size() > _maxBodySize)
+	{
+		_errorCode = 413;
+		_state = PARSE_ERROR;
+		return;
+	}
+	// Also check Content-Length if we have it
+	if (_contentLength > _maxBodySize)
+	{
+		_errorCode = 413;
+		_state = PARSE_ERROR;
+		return;
+	}
+	// For chunked encoding: check if pending chunk would exceed limit
+	// _expectedChunkSize contains the size of the chunk we're about to read
+	if (_body.size() + _expectedChunkSize > _maxBodySize)
+	{
+		_errorCode = 413;
+		_state = PARSE_ERROR;
+		return;
+	}
+}
+
+bool Request::headersComplete() const
+{
+	return _state == PARSE_BODY ||
+	       _state == PARSE_CHUNKED_BODY ||
+	       _state == PARSE_COMPLETE ||
+	       _state == PARSE_ERROR;
 }

@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:30 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/05 17:30:43 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/07 23:09:13 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -77,14 +77,29 @@ class Router
 		*/
 		Response route(const Request& request, int serverPort);
 
+		/*
+			findLocation() - Find the best matching location for a path
+
+			Used by Server to determine location-specific settings like
+			client_max_body_size before request processing is complete.
+
+			Parameters:
+				server: The server configuration to search in
+				path:   The request path to match
+				method: The HTTP method (affects extension-based matching)
+
+			Returns:
+				Pointer to matching LocationConfig, or NULL if no match
+		*/
+		const LocationConfig* findLocation(const ServerConfig& server,
+											const std::string& path,
+											const std::string& method) const;
+
 private:
 	// ================================
 	//  Server/Location Finding
 	// ================================
 	const ServerConfig* findServer(int port, const std::string& hostname = "") const;
-	const LocationConfig* findLocation(const ServerConfig& server,
-										const std::string& path,
-										const std::string& method) const;
 
 	// ================================
 	//  Path Resolution

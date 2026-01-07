@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:13 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/07 17:25:40 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/07 23:09:13 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -64,11 +64,15 @@ class Request
 		int getErrorCode() const;  // HTTP error code (400, 413, etc.)
 
 		// Set the maximum allowed body size (from config)
+		// When called, enables body size checking and validates any existing body data
 		void setMaxBodySize(size_t maxSize);
 
 		// Body size for limit checking
 		size_t getContentLength() const;
 		size_t getBodySize() const;
+
+		// Check if headers have been fully parsed (ready for location-based config)
+		bool headersComplete() const;
 
 		// Client IP (set by Connectioin/Server for CGI use)
 		void setClientIP(const std::string& ip);
@@ -91,6 +95,7 @@ class Request
 		size_t _contentLength;
 		size_t _bodyBytesRead;
 		size_t _expectedChunkSize;  // 0 = reading size line, >0 = reading chunk data
+		bool _skipBodySizeCheck;    // Defer body size check until location is known
 		bool parseRequestLine(const std::string& line);
 		bool parseHeader(const std::string& line);
 		bool parseChunkedBody();
