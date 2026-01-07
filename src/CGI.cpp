@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:56:09 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/06 16:12:19 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/07 13:12:16 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1855,10 +1855,34 @@ bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
 	close(stdout_pipe[1]);  // Child's write end
 	stdout_pipe[1] = -1;
 
+
 	// =========================================
-	//  Step 3: Write Request Body to Child
+	//  Step 3 & 4: Write Body AND Read Output Simultaneously
 	// =========================================
+	/*
+		CRITICAL: We must read and write at the same time!
+
+		Why? Pipe buffers are limited (~64KB on Linux).
+		If the CGI produces output while we're still writing input,
+		and we don't read the output, the CGI will block on write(),
+		and we'll block on write() too = DEADLOCK.
+
+		Solution: Use poll() to monitor both pipes and handle
+		whichever one is ready.
+	*/
+
+	setNonBlocking(stdin_pipe[1]);
+	setNonBlocking(stdout_pipe[0]);
+
 	const std::string& requestBody = getRequestBody();
+	size_t totalWritten = 0;
+	size_t bodySize = requestBody.size();
+	const char* bodyData = requestBody.c_str();
+	bool doneWriting = requestBody.empty();
+
+	std::string cgiOutput;
+	char buffer[65536];  // Larger buffer for efficiency
+	time_t startTime = time(NULL);
 
 	#if DEBUG >= 1
 	std::cerr << "  [CGI] Request body size: " << requestBody.size() << " bytes" << std::endl;
@@ -1876,80 +1900,17 @@ bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
 	}
 	#endif
 
-
-	if (!requestBody.empty())
-	{
-		// Set write end to non-blocking to avoid hanging on large bodies
-		setNonBlocking(stdin_pipe[1]);
-
-		size_t totalWritten = 0;
-		size_t bodySize = requestBody.size();
-		const char* bodyData = requestBody.c_str();
-
-		while (totalWritten < bodySize)
-		{
-			struct pollfd pfd;
-			pfd.fd = stdin_pipe[1];
-			pfd.events = POLLOUT;
-			pfd.revents = 0;
-
-			int pollResult = poll(&pfd, 1, timeout * 1000);
-
-			if (pollResult == 0)
-			{
-				// Timeout writing to CGI
-				close(stdin_pipe[1]);
-				stdin_pipe[1] = -1;
-				close(stdout_pipe[0]);
-				stdout_pipe[0] = -1;
-				cleanupChild(pid);
-
-				result.success = false;
-				result.statusCode = 504;
-				result.errorMessage = "Timeout writing request body to CGI";
-				return result;
-			}
-			else if (pollResult < 0)
-			{
-				break;  // Error, stop writing
-			}
-
-			ssize_t written = write(stdin_pipe[1], bodyData + totalWritten,
-									bodySize - totalWritten);
-			if (written > 0)
-			{
-				totalWritten += written;
-			}
-			else if (written == -1 && errno != EAGAIN && errno != EWOULDBLOCK)
-			{
-				break;  // Write error
-			}
-		}
-	}
-
-	// Close write end to signal EOF to child
-	close(stdin_pipe[1]);
-	stdin_pipe[1] = -1;
-
-	// =========================================
-	//  Step 4: Read CGI Output with Timeout
-	// =========================================
-	setNonBlocking(stdout_pipe[0]);
-
-	std::string cgiOutput;
-	char buffer[4096];
-	int timeoutMs = timeout * 1000;  // Convert to milliseconds
-	time_t startTime = time(NULL);
-
 	while (true)
 	{
-		// Calculate remaining timeout
+		// Check timeout
 		time_t elapsed = time(NULL) - startTime;
-		int remainingMs = timeoutMs - (elapsed * 1000);
-
-		if (remainingMs <= 0)
+		if (elapsed >= timeout)
 		{
-			// Timeout reached
+			if (stdin_pipe[1] >= 0)
+			{
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+			}
 			close(stdout_pipe[0]);
 			stdout_pipe[0] = -1;
 			cleanupChild(pid);
@@ -1962,40 +1923,120 @@ bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
 			return result;
 		}
 
-		// Use poll() for proper timeout handling
-		struct pollfd pfd;
-		pfd.fd = stdout_pipe[0];
-		pfd.events = POLLIN;
-		pfd.revents = 0;
+		// Setup poll for both pipes
+		struct pollfd pfds[2];
+		int nfds = 0;
+		int stdinIndex = -1;
+		int stdoutIndex = -1;
 
-		int pollResult = poll(&pfd, 1, remainingMs > 1000 ? 1000 : remainingMs);
+		// Add stdout pipe (always monitor for reading)
+		stdoutIndex = nfds;
+		pfds[nfds].fd = stdout_pipe[0];
+		pfds[nfds].events = POLLIN;
+		pfds[nfds].revents = 0;
+		nfds++;
 
-		if (pollResult == 0)
+		// Add stdin pipe only if we still have data to write
+		if (!doneWriting && stdin_pipe[1] >= 0)
 		{
-			// poll timeout - check if child has exited
-			int status;
-			pid_t waitResult = waitpid(pid, &status, WNOHANG);
+			stdinIndex = nfds;
+			pfds[nfds].fd = stdin_pipe[1];
+			pfds[nfds].events = POLLOUT;
+			pfds[nfds].revents = 0;
+			nfds++;
+		}
 
-			if (waitResult == pid)
+		// Poll with 1 second timeout (to check overall timeout)
+		int pollResult = poll(pfds, nfds, 1000);
+
+		if (pollResult < 0)
+		{
+			if (errno == EINTR)
 			{
-				// Child exited, read any remaining data
-				while (true)
-				{
-					ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer) - 1);
-					if (bytesRead > 0)
-					{
-						cgiOutput.append(buffer, bytesRead);
-					}
-					else
-					{
-						break;
-					}
-				}
+				continue;  // Interrupted by signal, retry
+			}
+			// Poll error
+			if (stdin_pipe[1] >= 0)
+			{
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+			}
+			close(stdout_pipe[0]);
+			stdout_pipe[0] = -1;
+			cleanupChild(pid);
 
+			result.success = false;
+			result.statusCode = 500;
+			result.errorMessage = "poll() error: ";
+			result.errorMessage += strerror(errno);
+			return result;
+		}
+
+		// Handle stdin (writing to CGI)
+		if (stdinIndex >= 0 && (pfds[stdinIndex].revents & POLLOUT))
+		{
+			ssize_t written = write(stdin_pipe[1], bodyData + totalWritten,
+									bodySize - totalWritten);
+			if (written > 0)
+			{
+				totalWritten += written;
+				if (totalWritten >= bodySize)
+				{
+					// Done writing, close stdin to signal EOF
+					close(stdin_pipe[1]);
+					stdin_pipe[1] = -1;
+					doneWriting = true;
+					#if DEBUG >= 1
+					std::cerr << "  [CGI] Finished writing " << totalWritten << " bytes to stdin" << std::endl;
+					#endif
+				}
+			}
+			else if (written == -1 && errno != EAGAIN && errno != EWOULDBLOCK)
+			{
+				// Write error - close stdin and stop writing
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+				doneWriting = true;
+			}
+		}
+
+		// Check for stdin errors
+		if (stdinIndex >= 0 && (pfds[stdinIndex].revents & (POLLERR | POLLHUP)))
+		{
+			// Pipe closed or error - stop writing
+			if (stdin_pipe[1] >= 0)
+			{
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+			}
+			doneWriting = true;
+		}
+
+		// Handle stdout (reading from CGI)
+		if (pfds[stdoutIndex].revents & POLLIN)
+		{
+			ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer));
+			if (bytesRead > 0)
+			{
+				cgiOutput.append(buffer, bytesRead);
+			}
+			else if (bytesRead == 0)
+			{
+				// EOF - CGI closed stdout
 				close(stdout_pipe[0]);
 				stdout_pipe[0] = -1;
 
-				// Check exit status
+				// Close stdin if still open
+				if (stdin_pipe[1] >= 0)
+				{
+					close(stdin_pipe[1]);
+					stdin_pipe[1] = -1;
+				}
+
+				// Wait for child to exit
+				int status;
+				waitpid(pid, &status, 0);
+
 				if (!WIFEXITED(status))
 				{
 					result.success = false;
@@ -2024,48 +2065,117 @@ bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
 					return result;
 				}
 
-				break;  // Exit read loop, we have all output
+				#if DEBUG >= 1
+				std::cerr << "  [CGI] Read " << cgiOutput.size() << " bytes from stdout" << std::endl;
+				#endif
+
+				break;  // Exit loop - we're done
+			}
+			// bytesRead < 0 with EAGAIN is normal, just continue
+		}
+
+		// Check for stdout hangup (CGI exited)
+		if (pfds[stdoutIndex].revents & POLLHUP)
+		{
+			// Read any remaining data
+			while (true)
+			{
+				ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer));
+				if (bytesRead > 0)
+				{
+					cgiOutput.append(buffer, bytesRead);
+				}
+				else
+				{
+					break;
+				}
 			}
 
-			// Child still running, continue polling
-			continue;
-		}
-		else if (pollResult < 0)
-		{
-			if (errno == EINTR)
-			{
-				continue;  // Interrupted by signal, retry
-			}
-			// Poll error
 			close(stdout_pipe[0]);
 			stdout_pipe[0] = -1;
+
+			if (stdin_pipe[1] >= 0)
+			{
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+			}
+
+			// Wait for child
+			int status;
+			waitpid(pid, &status, 0);
+
+			if (!WIFEXITED(status))
+			{
+				result.success = false;
+				result.statusCode = 500;
+
+				if (WIFSIGNALED(status))
+				{
+					int sig = WTERMSIG(status);
+					std::ostringstream oss;
+					oss << "CGI script killed by signal " << sig;
+					result.errorMessage = oss.str();
+				}
+				else
+				{
+					result.errorMessage = "CGI script terminated abnormally";
+				}
+				return result;
+			}
+
+			break;
+		}
+
+		// Check for stdout errors
+		if (pfds[stdoutIndex].revents & POLLERR)
+		{
+			close(stdout_pipe[0]);
+			stdout_pipe[0] = -1;
+
+			if (stdin_pipe[1] >= 0)
+			{
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+			}
+
 			cleanupChild(pid);
 
 			result.success = false;
 			result.statusCode = 500;
-			result.errorMessage = "poll() error reading CGI output: ";
-			result.errorMessage += strerror(errno);
+			result.errorMessage = "Pipe error while reading CGI output";
 			return result;
 		}
 
-		// Data available or pipe closed
-		if (pfd.revents & (POLLIN | POLLHUP))
+		// If poll returned 0 (timeout), check if child exited
+		if (pollResult == 0)
 		{
-			ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer) - 1);
+			int status;
+			pid_t waitResult = waitpid(pid, &status, WNOHANG);
 
-			if (bytesRead > 0)
+			if (waitResult == pid)
 			{
-				cgiOutput.append(buffer, bytesRead);
-			}
-			else if (bytesRead == 0)
-			{
-				// EOF - child closed stdout
+				// Child exited, drain remaining output
+				while (true)
+				{
+					ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer));
+					if (bytesRead > 0)
+					{
+						cgiOutput.append(buffer, bytesRead);
+					}
+					else
+					{
+						break;
+					}
+				}
+
 				close(stdout_pipe[0]);
 				stdout_pipe[0] = -1;
 
-				// Wait for child to fully exit
-				int status;
-				waitpid(pid, &status, 0);
+				if (stdin_pipe[1] >= 0)
+				{
+					close(stdin_pipe[1]);
+					stdin_pipe[1] = -1;
+				}
 
 				if (!WIFEXITED(status))
 				{
@@ -2086,41 +2196,11 @@ bool CGI::parseCgiOutput(const std::string& output, CGIResult& result)
 					return result;
 				}
 
-				break;  // Exit read loop
+				break;
 			}
-			else
-			{
-				// bytesRead < 0
-				if (errno == EAGAIN || errno == EWOULDBLOCK)
-				{
-					continue;
-				}
-				// Read error
-				close(stdout_pipe[0]);
-				stdout_pipe[0] = -1;
-				cleanupChild(pid);
-
-				result.success = false;
-				result.statusCode = 500;
-				result.errorMessage = "Error reading CGI output: ";
-				result.errorMessage += strerror(errno);
-				return result;
-			}
-		}
-
-		if (pfd.revents & POLLERR)
-		{
-			// Error on pipe
-			close(stdout_pipe[0]);
-			stdout_pipe[0] = -1;
-			cleanupChild(pid);
-
-			result.success = false;
-			result.statusCode = 500;
-			result.errorMessage = "Pipe error while reading CGI output";
-			return result;
 		}
 	}
+
 
 	// =========================================
 	//  Step 5: Validate Output

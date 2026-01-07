@@ -913,3 +913,398 @@ Key changes:
 5. **Added `#include <poll.h>`** - Make sure this is included at the top of the file.
 
 The timeout should now work correctly and the server won't block indefinitely.
+
+
+
+
+
+
+
+
+# Second Attempt 
+
+
+I see the problem! The issue is that writing 100MB to the CGI's stdin is blocking while the CGI is trying to write to stdout. This creates a **deadlock**:
+
+1. Parent tries to write 100MB to child's stdin
+2. Child reads some data, processes it, tries to write to stdout
+3. Stdout pipe buffer fills up (~64KB on Linux)
+4. Child blocks waiting for parent to read from stdout
+5. Parent is still trying to write to stdin → **DEADLOCK**
+
+The pipe buffers are only ~64KB, so neither side can make progress.
+
+## The Fix: Read and Write Simultaneously
+
+We need to use `poll()` to monitor **both** the stdin write and stdout read simultaneously:
+
+````cpp
+// ...existing code for execute() until Step 3...
+
+	// =========================================
+	//  Step 3 & 4: Write Body AND Read Output Simultaneously
+	// =========================================
+	/*
+		CRITICAL: We must read and write at the same time!
+		
+		Why? Pipe buffers are limited (~64KB on Linux).
+		If the CGI produces output while we're still writing input,
+		and we don't read the output, the CGI will block on write(),
+		and we'll block on write() too = DEADLOCK.
+		
+		Solution: Use poll() to monitor both pipes and handle
+		whichever one is ready.
+	*/
+	
+	setNonBlocking(stdin_pipe[1]);
+	setNonBlocking(stdout_pipe[0]);
+
+	const std::string& requestBody = getRequestBody();
+	size_t totalWritten = 0;
+	size_t bodySize = requestBody.size();
+	const char* bodyData = requestBody.c_str();
+	bool doneWriting = requestBody.empty();
+
+	std::string cgiOutput;
+	char buffer[65536];  // Larger buffer for efficiency
+	time_t startTime = time(NULL);
+
+	#if DEBUG >= 1
+	std::cerr << "  [CGI] Request body size: " << requestBody.size() << " bytes" << std::endl;
+	if (requestBody.size() > 0 && requestBody.size() <= 1000)
+	{
+		std::cerr << "  [CGI] Request body (first 500 chars): ["
+				<< requestBody.substr(0, 500) << "]" << std::endl;
+	}
+	else if (requestBody.size() > 1000)
+	{
+		std::cerr << "  [CGI] Request body preview (first 200 chars): ["
+				<< requestBody.substr(0, 200) << "]..." << std::endl;
+		std::cerr << "  [CGI] Request body preview (last 200 chars): [..."
+				<< requestBody.substr(requestBody.size() - 200) << "]" << std::endl;
+	}
+	#endif
+
+	while (true)
+	{
+		// Check timeout
+		time_t elapsed = time(NULL) - startTime;
+		if (elapsed >= timeout)
+		{
+			if (stdin_pipe[1] >= 0)
+			{
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+			}
+			close(stdout_pipe[0]);
+			stdout_pipe[0] = -1;
+			cleanupChild(pid);
+
+			result.success = false;
+			result.statusCode = 504;
+			std::ostringstream oss;
+			oss << "CGI script execution timed out after " << timeout << " seconds";
+			result.errorMessage = oss.str();
+			return result;
+		}
+
+		// Setup poll for both pipes
+		struct pollfd pfds[2];
+		int nfds = 0;
+		int stdinIndex = -1;
+		int stdoutIndex = -1;
+
+		// Add stdout pipe (always monitor for reading)
+		stdoutIndex = nfds;
+		pfds[nfds].fd = stdout_pipe[0];
+		pfds[nfds].events = POLLIN;
+		pfds[nfds].revents = 0;
+		nfds++;
+
+		// Add stdin pipe only if we still have data to write
+		if (!doneWriting && stdin_pipe[1] >= 0)
+		{
+			stdinIndex = nfds;
+			pfds[nfds].fd = stdin_pipe[1];
+			pfds[nfds].events = POLLOUT;
+			pfds[nfds].revents = 0;
+			nfds++;
+		}
+
+		// Poll with 1 second timeout (to check overall timeout)
+		int pollResult = poll(pfds, nfds, 1000);
+
+		if (pollResult < 0)
+		{
+			if (errno == EINTR)
+			{
+				continue;  // Interrupted by signal, retry
+			}
+			// Poll error
+			if (stdin_pipe[1] >= 0)
+			{
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+			}
+			close(stdout_pipe[0]);
+			stdout_pipe[0] = -1;
+			cleanupChild(pid);
+
+			result.success = false;
+			result.statusCode = 500;
+			result.errorMessage = "poll() error: ";
+			result.errorMessage += strerror(errno);
+			return result;
+		}
+
+		// Handle stdin (writing to CGI)
+		if (stdinIndex >= 0 && (pfds[stdinIndex].revents & POLLOUT))
+		{
+			ssize_t written = write(stdin_pipe[1], bodyData + totalWritten,
+									bodySize - totalWritten);
+			if (written > 0)
+			{
+				totalWritten += written;
+				if (totalWritten >= bodySize)
+				{
+					// Done writing, close stdin to signal EOF
+					close(stdin_pipe[1]);
+					stdin_pipe[1] = -1;
+					doneWriting = true;
+					#if DEBUG >= 1
+					std::cerr << "  [CGI] Finished writing " << totalWritten << " bytes to stdin" << std::endl;
+					#endif
+				}
+			}
+			else if (written == -1 && errno != EAGAIN && errno != EWOULDBLOCK)
+			{
+				// Write error - close stdin and stop writing
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+				doneWriting = true;
+			}
+		}
+
+		// Check for stdin errors
+		if (stdinIndex >= 0 && (pfds[stdinIndex].revents & (POLLERR | POLLHUP)))
+		{
+			// Pipe closed or error - stop writing
+			if (stdin_pipe[1] >= 0)
+			{
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+			}
+			doneWriting = true;
+		}
+
+		// Handle stdout (reading from CGI)
+		if (pfds[stdoutIndex].revents & POLLIN)
+		{
+			ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer));
+			if (bytesRead > 0)
+			{
+				cgiOutput.append(buffer, bytesRead);
+			}
+			else if (bytesRead == 0)
+			{
+				// EOF - CGI closed stdout
+				close(stdout_pipe[0]);
+				stdout_pipe[0] = -1;
+
+				// Close stdin if still open
+				if (stdin_pipe[1] >= 0)
+				{
+					close(stdin_pipe[1]);
+					stdin_pipe[1] = -1;
+				}
+
+				// Wait for child to exit
+				int status;
+				waitpid(pid, &status, 0);
+
+				if (!WIFEXITED(status))
+				{
+					result.success = false;
+					result.statusCode = 500;
+
+					if (WIFSIGNALED(status))
+					{
+						int sig = WTERMSIG(status);
+						std::ostringstream oss;
+						oss << "CGI script killed by signal " << sig;
+						result.errorMessage = oss.str();
+					}
+					else
+					{
+						result.errorMessage = "CGI script terminated abnormally";
+					}
+					return result;
+				}
+
+				int exitCode = WEXITSTATUS(status);
+				if (exitCode == 2 && cgiOutput.empty())
+				{
+					result.success = false;
+					result.statusCode = 500;
+					result.errorMessage = "Failed to execute CGI interpreter";
+					return result;
+				}
+
+				#if DEBUG >= 1
+				std::cerr << "  [CGI] Read " << cgiOutput.size() << " bytes from stdout" << std::endl;
+				#endif
+
+				break;  // Exit loop - we're done
+			}
+			// bytesRead < 0 with EAGAIN is normal, just continue
+		}
+
+		// Check for stdout hangup (CGI exited)
+		if (pfds[stdoutIndex].revents & POLLHUP)
+		{
+			// Read any remaining data
+			while (true)
+			{
+				ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer));
+				if (bytesRead > 0)
+				{
+					cgiOutput.append(buffer, bytesRead);
+				}
+				else
+				{
+					break;
+				}
+			}
+
+			close(stdout_pipe[0]);
+			stdout_pipe[0] = -1;
+
+			if (stdin_pipe[1] >= 0)
+			{
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+			}
+
+			// Wait for child
+			int status;
+			waitpid(pid, &status, 0);
+
+			if (!WIFEXITED(status))
+			{
+				result.success = false;
+				result.statusCode = 500;
+
+				if (WIFSIGNALED(status))
+				{
+					int sig = WTERMSIG(status);
+					std::ostringstream oss;
+					oss << "CGI script killed by signal " << sig;
+					result.errorMessage = oss.str();
+				}
+				else
+				{
+					result.errorMessage = "CGI script terminated abnormally";
+				}
+				return result;
+			}
+
+			break;
+		}
+
+		// Check for stdout errors
+		if (pfds[stdoutIndex].revents & POLLERR)
+		{
+			close(stdout_pipe[0]);
+			stdout_pipe[0] = -1;
+
+			if (stdin_pipe[1] >= 0)
+			{
+				close(stdin_pipe[1]);
+				stdin_pipe[1] = -1;
+			}
+
+			cleanupChild(pid);
+
+			result.success = false;
+			result.statusCode = 500;
+			result.errorMessage = "Pipe error while reading CGI output";
+			return result;
+		}
+
+		// If poll returned 0 (timeout), check if child exited
+		if (pollResult == 0)
+		{
+			int status;
+			pid_t waitResult = waitpid(pid, &status, WNOHANG);
+
+			if (waitResult == pid)
+			{
+				// Child exited, drain remaining output
+				while (true)
+				{
+					ssize_t bytesRead = read(stdout_pipe[0], buffer, sizeof(buffer));
+					if (bytesRead > 0)
+					{
+						cgiOutput.append(buffer, bytesRead);
+					}
+					else
+					{
+						break;
+					}
+				}
+
+				close(stdout_pipe[0]);
+				stdout_pipe[0] = -1;
+
+				if (stdin_pipe[1] >= 0)
+				{
+					close(stdin_pipe[1]);
+					stdin_pipe[1] = -1;
+				}
+
+				if (!WIFEXITED(status))
+				{
+					result.success = false;
+					result.statusCode = 500;
+
+					if (WIFSIGNALED(status))
+					{
+						int sig = WTERMSIG(status);
+						std::ostringstream oss;
+						oss << "CGI script killed by signal " << sig;
+						result.errorMessage = oss.str();
+					}
+					else
+					{
+						result.errorMessage = "CGI script terminated abnormally";
+					}
+					return result;
+				}
+
+				break;
+			}
+		}
+	}
+
+	// =========================================
+	//  Step 5: Validate Output
+	// =========================================
+	// ...existing code...
+````
+
+## Key Changes:
+
+1. **Single `poll()` loop** monitors both stdin (write) and stdout (read) simultaneously
+2. **No more deadlock** - we read CGI output while still writing input
+3. **Larger buffer** (64KB) for more efficient reads
+4. **Proper handling of `POLLHUP`** - drain remaining data when CGI closes stdout
+
+## Also Important: Non-blocking Server
+
+Your current design has another issue - the CGI execution blocks the entire server's event loop. For a production server, you'd want to:
+
+1. Make CGI execution non-blocking (fork and return immediately)
+2. Add the stdout pipe FD to the main epoll loop
+3. Handle CGI output in the event loop like any other I/O
+
+But for now, this fix should get the 100MB test passing by preventing the deadlock.
