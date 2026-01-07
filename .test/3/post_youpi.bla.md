@@ -1308,3 +1308,706 @@ Your current design has another issue - the CGI execution blocks the entire serv
 3. Handle CGI output in the event loop like any other I/O
 
 But for now, this fix should get the 100MB test passing by preventing the deadlock.
+
+
+
+
+
+
+
+
+
+
+
+
+# client_max_body_size
+
+
+I'll help you fix the config parsing to support `client_max_body_size` in location blocks and then update the Request class to use it properly.
+
+## Step 1: Update `LocationConfig` to include `client_max_body_size`
+
+First, we need to modify the `Config.hpp` file to add the field to `LocationConfig`:
+
+````cpp
+// ...existing code...
+
+struct LocationConfig
+{
+    std::string path;
+    std::string root;
+    std::string index;
+    std::string upload_path;
+    std::string cgi_extension;
+    std::string cgi_path;
+    std::string redirect_url;
+    int redirect_code;
+    bool autoindex;
+    std::set<std::string> allowed_methods;
+    size_t client_max_body_size;  // Add this field
+
+    LocationConfig();
+};
+
+// ...existing code...
+````
+
+## Step 2: Update `LocationConfig` constructor
+
+````cpp
+// ...existing code...
+
+LocationConfig::LocationConfig() :
+	path("/"),
+	root(""),
+	index("index.html"),
+	upload_path(""),
+	cgi_extension(""),
+	cgi_path(""),
+	redirect_url(""),
+	redirect_code(0),
+	autoindex(false),
+	client_max_body_size(0)  // 0 means "inherit from server"
+{
+	// By default, only allow GET, the safest HTTP method
+	// POST and DELETE must be explicitly enabled in config
+	allowed_methods.insert("GET");
+}
+
+// ...existing code...
+````
+
+## Step 3: Parse `client_max_body_size` in location blocks
+
+````cpp
+// ...existing code... (inside parseLocationBlock, after the cgi_extension directive handling)
+
+		else if (directive == "cgi_extension")
+		{
+			/*
+				cgi_extension directive: file extension to trigger CGI
+				Example: cgi_extension .php
+				Files ending in .php will be executed via CGI
+			*/
+			if (tokens.size() < 2)
+			{
+				throw ConfigException("cgi_extension directive requires an extension");
+			}
+			location.cgi_extension = tokens[1];
+		}
+		else if (directive == "client_max_body_size")
+		{
+			/*
+				client_max_body_size directive in location block
+				Overrides the server-level setting for this specific location
+				Example: client_max_body_size 100M;
+			*/
+			if (tokens.size() < 2)
+			{
+				throw ConfigException("client_max_body_size directive requires a value");
+			}
+			location.client_max_body_size = parseSize(tokens[1]);
+		}
+		else if (directive == "return")
+		{
+// ...existing code...
+````
+
+## Step 4: Add a helper method to `ServerConfig` to get the effective max body size
+
+Add this to your `Config.hpp`:
+
+````cpp
+// ...existing code...
+
+struct ServerConfig
+{
+    std::string host;
+    int port;
+    std::vector<std::string> server_names;
+    std::map<int, std::string> error_pages;
+    size_t client_max_body_size;
+    std::vector<LocationConfig> locations;
+
+    ServerConfig();
+    
+    // Get effective max body size for a location (location value if set, otherwise server value)
+    size_t getMaxBodySize(const LocationConfig* loc) const;
+    
+    // Find the best matching location for a URI
+    const LocationConfig* findLocation(const std::string& uri) const;
+};
+
+// ...existing code...
+````
+
+## Step 5: Implement the helper methods in Config.cpp
+
+````cpp
+// ...existing code... (after ServerConfig constructor)
+
+/*
+	getMaxBodySize: Get the effective client_max_body_size for a location
+	
+	Priority:
+		1. If location has client_max_body_size set (> 0), use it
+		2. Otherwise, use the server's client_max_body_size
+	
+	This allows location-specific overrides like:
+		location /upload { client_max_body_size 100M; }
+		location /api { client_max_body_size 1K; }
+*/
+size_t ServerConfig::getMaxBodySize(const LocationConfig* loc) const
+{
+	if (loc && loc->client_max_body_size > 0)
+	{
+		return loc->client_max_body_size;
+	}
+	return client_max_body_size;
+}
+
+/*
+	findLocation: Find the best matching location for a URI
+
+	HTTP servers use "longest prefix match" to find the right location.
+	For URI "/images/photo.jpg":
+		- location "/" matches (prefix "/" is in URI)
+		- location "/images" matches better (longer prefix)
+		- location "/images/photo.jpg" would match best if it existed
+*/
+const LocationConfig* ServerConfig::findLocation(const std::string& uri) const
+{
+	const LocationConfig* bestMatch = NULL;
+	size_t longestMatch = 0;
+
+	for (size_t i = 0; i < locations.size(); ++i)
+	{
+		const std::string& locPath = locations[i].path;
+
+		// Handle extension matching (e.g. *.bla)
+		if (locPath.length() > 1 && locPath[0] == '*')
+		{
+			std::string suffix = locPath.substr(1);
+			if (uri.length() >= suffix.length() &&
+				uri.compare(uri.length() - suffix.length(), suffix.length(), suffix) == 0)
+			{
+				return &locations[i];
+			}
+			continue;
+		}
+
+		// Check if this location's path is a prefix of the requested URI
+		if (uri.compare(0, locPath.length(), locPath) == 0)
+		{
+			// For non-root locations, ensure we match at a path boundary
+			if (locPath != "/" && uri.length() > locPath.length()
+				&& uri[locPath.length()] != '/')
+			{
+				continue;
+			}
+
+			// Keep track of the longest (most specific) match
+			if (locPath.length() > longestMatch)
+			{
+				longestMatch = locPath.length();
+				bestMatch = &locations[i];
+			}
+		}
+	}
+	return bestMatch;
+}
+
+// ...existing code...
+````
+
+## Step 6: Update `Request` class to accept max body size
+
+Now we need to update `Request.hpp` and Request.cpp to use the configured max body size:
+
+````cpp
+// ...existing code...
+
+class Request
+{
+public:
+    // ...existing code...
+    
+    // Set the maximum allowed body size (from config)
+    void setMaxBodySize(size_t maxSize);
+    
+    // ...existing code...
+
+private:
+    // ...existing code...
+    size_t _maxBodySize;  // Add this field
+    // ...existing code...
+};
+
+// ...existing code...
+````
+
+## Step 7: Update Request.cpp constructor and methods
+
+````cpp
+// ...existing code...
+
+// Default Constructor
+Request::Request() :
+	_method(""),
+	_uri(""),
+	_path(""),
+	_queryString(""),
+	_httpVersion(""),
+	_body(""),
+	_clientIP(""),
+	_state(PARSE_REQUEST_LINE),
+	_errorCode(0),
+	_buffer(""),
+	_contentLength(0),
+	_bodyBytesRead(0),
+	_expectedChunkSize(0),
+	_maxBodySize(1048576)  // Default 1MB
+{}
+
+// ...existing code...
+
+// Copy constructor
+Request::Request(const Request& other) :
+	_method(other._method),
+	_uri(other._uri),
+	_path(other._path),
+	_queryString(other._queryString),
+	_httpVersion(other._httpVersion),
+	_body(other._body),
+	_clientIP(other._clientIP),
+	_state(other._state),
+	_errorCode(other._errorCode),
+	_buffer(other._buffer),
+	_contentLength(other._contentLength),
+	_bodyBytesRead(other._bodyBytesRead),
+	_expectedChunkSize(other._expectedChunkSize),
+	_maxBodySize(other._maxBodySize)
+{}
+
+// copy assignment operator
+Request& Request::operator=(const Request& other)
+{
+	if (this != &other)
+	{
+		_method = other._method;
+		_uri = other._uri;
+		_path = other._path;
+		_queryString = other._queryString;
+		_httpVersion = other._httpVersion;
+		_body = other._body;
+		_clientIP = other._clientIP;
+		_state = other._state;
+		_errorCode = other._errorCode;
+		_buffer = other._buffer;
+		_contentLength = other._contentLength;
+		_bodyBytesRead = other._bodyBytesRead;
+		_expectedChunkSize = other._expectedChunkSize;
+		_maxBodySize = other._maxBodySize;
+	}
+	return *this;
+}
+
+// ...existing code...
+
+void Request::reset()
+{
+	_method.clear();
+	_uri.clear();
+	_path.clear();
+	_queryString.clear();
+	_httpVersion.clear();
+	_body.clear();
+	_clientIP.clear();
+	_headers.clear();
+	_buffer.clear();
+
+	_state = PARSE_REQUEST_LINE;
+	_errorCode = 0;
+	_contentLength = 0;
+	_bodyBytesRead = 0;
+	_expectedChunkSize = 0;
+	// Note: Don't reset _maxBodySize here - it should persist for the connection
+}
+
+// ...existing code...
+````
+
+## Step 8: Update the body size check in `Request::parse()`
+
+````cpp
+// ...existing code... (in the PARSE_HEADERS state, where Content-Length is checked)
+
+				if (!contentLength.empty())
+				{
+					// Content-Length body
+					_contentLength = std::atol(contentLength.c_str());
+
+					// Check against client_max_body_size from config
+					if (_contentLength > _maxBodySize)
+					{
+						_state = PARSE_ERROR;
+						_errorCode = 413; // Payload Too Large
+						return true;
+					}
+
+					if (_contentLength > 0)
+					{
+						// Request has a body, move to body parsing
+						_state = PARSE_BODY;
+					}
+					else
+					{
+						// No body (Content-Length: 0)
+						_state = PARSE_COMPLETE;
+					}
+				}
+
+// ...existing code...
+````
+
+## Step 9: Update chunked body size check
+
+````cpp
+// ...existing code... (in parseChunkedBody, Step 4: Enforce Body Size Limit)
+
+		// ===================================
+		//  Step 4: Enforce Body Size Limit
+		// ===================================
+		/*
+			Even with chunked encoding, we must limit total body size
+			Prevent DoS attacks with infinite chunks
+		*/
+		if (_body.size() + chunkSize > _maxBodySize)
+		{
+			_state = PARSE_ERROR;
+			_errorCode = 413; // Payload Too Large
+			return false;
+		}
+
+// ...existing code...
+````
+
+## Step 10: Add the setter method
+
+````cpp
+// ...existing code... (at the end with other setters/getters)
+
+void Request::setMaxBodySize(size_t maxSize)
+{
+	_maxBodySize = maxSize;
+}
+
+// ...existing code...
+````
+
+## Step 11: Usage in your connection handler
+
+In your server code where you handle connections, you'll need to set the max body size after you know which location the request is for. This typically happens after parsing the request line:
+
+````cpp
+// Example usage in your connection/client handler:
+// After parsing request line but before parsing body
+
+// Get the server config for this connection
+const ServerConfig* serverConfig = config.getServerByHostPort(host, port);
+if (serverConfig)
+{
+    // Find the matching location
+    const LocationConfig* location = serverConfig->findLocation(request.getPath());
+    
+    // Set the max body size based on config
+    size_t maxBodySize = serverConfig->getMaxBodySize(location);
+    request.setMaxBodySize(maxBodySize);
+}
+````
+
+This solution:
+1. Adds `client_max_body_size` to `LocationConfig` with a default of 0 (meaning inherit from server)
+2. Parses the directive in location blocks
+3. Provides `getMaxBodySize()` helper that returns location value if set, otherwise server value
+4. Updates `Request` to use a configurable max body size instead of hardcoded values
+5. Works with your existing config file format (like `client_max_body_size 100M;` in the `*.bla` location)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# request.setMaxBodySize(maxBodySize) during parsing
+
+You're right! We need to set the max body size during parsing, specifically after we have the headers (so we know the path and can do location matching). This requires passing the server config to the Request or having a callback mechanism.
+
+Here's the cleanest approach - add a method to set max body size based on config after headers are parsed:
+
+## Step 1: Add a method to update max body size in Request
+
+````cpp
+// ...existing code...
+
+class Request
+{
+public:
+    // ...existing code...
+    
+    // Update max body size based on config (call after headers are parsed)
+    void updateMaxBodySizeFromConfig(const ServerConfig& server);
+    
+    // ...existing code...
+};
+
+// ...existing code...
+````
+
+## Step 2: Implement the method in Request.cpp
+
+````cpp
+// ...existing code... (add after setMaxBodySize)
+
+/*
+    updateMaxBodySizeFromConfig() - Update max body size based on server config
+    
+    This should be called after headers are parsed, when we know the request path.
+    It performs location matching and sets the appropriate max body size.
+    
+    Priority:
+        1. Location's client_max_body_size (if > 0)
+        2. Server's client_max_body_size
+*/
+void Request::updateMaxBodySizeFromConfig(const ServerConfig& server)
+{
+    // Find the matching location for this request path
+    const LocationConfig* location = server.findLocation(_path);
+    
+    // Get the effective max body size
+    _maxBodySize = server.getMaxBodySize(location);
+    
+    #if DEBUG >= 1
+    std::cout << "  [Request] Updated max body size to " << _maxBodySize 
+              << " for path: " << _path << std::endl;
+    #endif
+}
+
+// ...existing code...
+````
+
+## Step 3: Update the parse() method to accept an optional server config
+
+The tricky part is that during parsing, we need to update the max body size **after headers are complete but before checking Content-Length**. Here's how to modify the `parse()` method:
+
+````cpp
+// ...existing code...
+
+/*
+    parse() - Main parsing function, feeds incoming data to the request parser
+    
+    ...existing comments...
+    
+    The optional serverConfig parameter allows updating max body size
+    based on location matching after headers are parsed.
+*/
+bool Request::parse(const std::string& data, const ServerConfig* serverConfig)
+{
+    // Add incoming data to the buffer
+    _buffer += data;
+
+    // ...existing DEBUG code...
+
+    // ==============================
+    //  PARSE_REQUEST_LINE State
+    // ==============================
+    // ...existing PARSE_REQUEST_LINE code...
+
+    // ==============================
+    //  PARSE_HEADERS State
+    // ==============================
+    if (_state == PARSE_HEADERS)
+    {
+        // Process headers line by line until we find the empty line
+        while (true)
+        {
+            // Look for next line ending
+            size_t pos = _buffer.find("\r\n");
+            if (pos == std::string::npos)
+            {
+                // No complete line yet, need more data
+                if (_buffer.size() > 8192)
+                {
+                    _state = PARSE_ERROR;
+                    _errorCode = 431;
+                    return true;
+                }
+                return false;
+            }
+
+            // Extract the line (without \r\n)
+            std::string line = _buffer.substr(0, pos);
+
+            // Remove processed line from buffer (including \r\n)
+            _buffer.erase(0, pos + 2);
+
+            // Empty line marks end of headers
+            if (line.empty())
+            {
+                // Headers are complete!
+
+                // Check if HTTP/1.1 requires Host header
+                if (_httpVersion == "HTTP/1.1")
+                {
+                    if (getHeader("Host").empty())
+                    {
+                        _state = PARSE_ERROR;
+                        _errorCode = 400;
+                        return true;
+                    }
+                }
+
+                // ================================================
+                // UPDATE MAX BODY SIZE BASED ON CONFIG
+                // ================================================
+                // Now that we have the path and headers, we can do
+                // location matching and get the correct max body size
+                if (serverConfig)
+                {
+                    updateMaxBodySizeFromConfig(*serverConfig);
+                }
+
+                // Determine if request has a body
+                std::string contentLength = getHeader("Content-Length");
+                std::string transferEncoding = getHeader("Transfer-Encoding");
+
+                if (!contentLength.empty())
+                {
+                    _contentLength = std::atol(contentLength.c_str());
+
+                    // Check against client_max_body_size from config
+                    // Now uses the correctly updated _maxBodySize
+                    if (_contentLength > _maxBodySize)
+                    {
+                        _state = PARSE_ERROR;
+                        _errorCode = 413; // Payload Too Large
+                        return true;
+                    }
+
+                    if (_contentLength > 0)
+                    {
+                        _state = PARSE_BODY;
+                    }
+                    else
+                    {
+                        _state = PARSE_COMPLETE;
+                    }
+                }
+                else if (!transferEncoding.empty() &&
+                         transferEncoding.find("chunked") != std::string::npos)
+                {
+                    _state = PARSE_CHUNKED_BODY;
+                }
+                else
+                {
+                    _state = PARSE_COMPLETE;
+                    return true;
+                }
+
+                break;
+            }
+
+            // Parse this header line
+            if (!parseHeader(line))
+            {
+                _state = PARSE_ERROR;
+                return true;
+            }
+        }
+    }
+
+    // ...existing PARSE_BODY and PARSE_CHUNKED_BODY code...
+}
+
+// ...existing code...
+````
+
+## Step 4: Update the header file with the new signature
+
+````cpp
+// ...existing code...
+
+#include "Config.hpp"  // Add this include
+
+class Request
+{
+public:
+    // ...existing code...
+    
+    // Parse incoming data - returns true when request is complete
+    // serverConfig is optional, used to get correct max body size
+    bool parse(const std::string& data, const ServerConfig* serverConfig = NULL);
+    
+    // ...existing code...
+};
+
+// ...existing code...
+````
+
+## Step 5: Update your connection handler to pass the server config
+
+In your `Server.cpp` or wherever you handle client connections, update the parse call:
+
+````cpp
+// Example in your connection handler (Server.cpp or similar)
+// ...existing code...
+
+// When reading data from client
+ssize_t bytesRead = recv(clientFd, buffer, sizeof(buffer), 0);
+if (bytesRead > 0)
+{
+    std::string data(buffer, bytesRead);
+    
+    // Get the server config for this connection
+    // (You likely already have this from when the connection was accepted)
+    const ServerConfig* serverConfig = _config->getServerByHostPort(host, port);
+    
+    // Pass server config to parse for proper max body size handling
+    if (client.request.parse(data, serverConfig))
+    {
+        // Request complete, route it
+        Response response = _router.route(client.request, port);
+        // ...send response...
+    }
+}
+
+// ...existing code...
+````
+
+## Summary
+
+This approach:
+
+1. **Passes server config to `parse()`** - The config is passed as an optional parameter (NULL for backward compatibility)
+
+2. **Updates max body size after headers** - Once we have the path from the request line and all headers are parsed, we call `updateMaxBodySizeFromConfig()` which does location matching
+
+3. **Checks Content-Length against correct limit** - The `_maxBodySize` is now properly set before we validate the Content-Length header
+
+4. **Works with chunked encoding too** - The `parseChunkedBody()` also uses `_maxBodySize` which is now correctly set
+
+5. **Maintains backward compatibility** - If no server config is passed, it uses the default 1MB limit

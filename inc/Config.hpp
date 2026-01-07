@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:56:48 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/15 15:36:25 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/07 17:22:23 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -43,6 +43,7 @@ struct LocationConfig
 	int redirect_code;			// HTTP redirect status code (301, 302, etc.)
 	bool autoindex;				// Enable directory listing when no index file exists
 	std::set<std::string> allowed_methods;	// HTTP methods allowed for this route (GET, POST, DELETE)
+	size_t client_max_body_size;	// client max body size
 
 	// Constructor with sensible defaults
 	LocationConfig();
@@ -68,9 +69,12 @@ struct ServerConfig
 	// Constructor with sensible defaults
 	ServerConfig();
 
+	// Get effective max body size for a location (location value if set, otherwise server value)
+	size_t getMaxBodySize(const LocationConfig* loc) const;
+
 	// Find the best matching location for a given URI
 	// Uses "longest prefix match" - the most specific location wins
-	const LocationConfig* findLocation(const std::string& uri) const;
+	// const LocationConfig* findLocation(const std::string& uri) const;
 };
 
 

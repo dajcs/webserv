@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/06 09:56:37 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/07 13:52:18 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -937,10 +937,15 @@ Response Router::handlePost(const Request& request, const LocationConfig& locati
 	*/
 	else
 	{
-		// Check if body is empty
+		// Empty body is valid for POST -- just acknowledging it
 		if (request.getBody().empty())
 		{
-			return errorResponse(400);  // Bad Request - empty body
+			Response response;
+			response.setStatus(200, "OK");
+			response.setContentType("text/plain");
+			response.setBody("POST request received (empty body)\n");
+			response.addStandardHeaders();
+			return response;
 		}
 
 		// Generate filename from timestamp (no original name available)

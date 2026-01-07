@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:28 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/05 13:15:29 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/07 17:59:06 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -37,6 +37,7 @@ Request::Request() :
 	_state(PARSE_REQUEST_LINE),
 	_errorCode(0),
 	_buffer(""),
+	_maxBodySize(1048576),	// Default 1MB
 	_contentLength(0),
 	_bodyBytesRead(0),
 	_expectedChunkSize(0)
@@ -57,6 +58,7 @@ Request::Request(const Request& other) :
 	_state(other._state),
 	_errorCode(other._errorCode),
 	_buffer(other._buffer),
+	_maxBodySize(other._maxBodySize),
 	_contentLength(other._contentLength),
 	_bodyBytesRead(other._bodyBytesRead),
 	_expectedChunkSize(other._expectedChunkSize)
@@ -77,6 +79,7 @@ Request& Request::operator=(const Request& other)
 		_state = other._state;
 		_errorCode = other._errorCode;
 		_buffer = other._buffer;
+		_maxBodySize = other._maxBodySize;
 		_contentLength = other._contentLength;
 		_bodyBytesRead = other._bodyBytesRead;
 		_expectedChunkSize = other._expectedChunkSize;
@@ -115,6 +118,7 @@ void Request::reset()
 	_contentLength = 0;
 	_bodyBytesRead = 0;
 	_expectedChunkSize = 0;
+	// _maxBodySize: don't reset, persists for the connection
 }
 
 
@@ -895,8 +899,10 @@ bool Request::parseChunkedBody()
 
 			Example attack:
 				Client sends: 1000000\r\n<1MB data>\r\n1000000\r\n<1MB data>...
-				Without limit, serer runs out of memory
+				Without limit, server runs out of memory
 		*/
+		// TODO: Check against client_max_body_size from config
+		// For now, use a limit of 100MB for ubuntu_test
 		if (_body.size() + chunkSize > 104857600) // 100MB limit for chunked
 		{
 			_state = PARSE_ERROR;
@@ -1024,4 +1030,9 @@ void Request::setClientIP(const std::string& ip)
 const std::string& Request::getClientIP() const
 {
 	return _clientIP;
+}
+
+void Request::setMaxBodySize(size_t maxSize)
+{
+	_maxBodySize = maxSize;
 }

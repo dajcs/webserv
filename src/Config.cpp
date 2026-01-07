@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:03 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/05 16:37:49 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/07 17:22:37 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -47,7 +47,8 @@ LocationConfig::LocationConfig() :
 	cgi_path(""),
 	redirect_url(""),
 	redirect_code(0),
-	autoindex(false)
+	autoindex(false),
+	client_max_body_size(0)	// 0 means "inherit from server"
 {
 	// By default, only allow GET, the safest HTTP method
 	// POST and DELETE must be explicitly enabled in config
@@ -72,6 +73,25 @@ ServerConfig::ServerConfig() :
 	client_max_body_size(1048576) // 1MB default, same as many webservers
 {}
 
+
+/*
+	getMaxBodySize: Get the effective client_max_body_size for a location
+
+		1. if location has client_max_body_size set (> 0), use it
+		2. otherwise, use the server's client_max_body_size
+
+	This allows location specific overrides like:
+		location /upload { client_max_body_size 100M; }
+		location /api {client_max_body_size 1K; }
+*/
+size_t ServerConfig::getMaxBodySize(const LocationConfig* loc) const
+{
+	if (loc && loc->client_max_body_size > 0)
+	{
+		return loc->client_max_body_size;
+	}
+	return client_max_body_size;
+}
 
 /*
 	findLocation: Find the best matching location for a URI
@@ -630,6 +650,19 @@ void Config::parseLocationBlock(std::ifstream& file, std::string& line, ServerCo
 				throw ConfigException("cgi_extension directive requires an extension");
 			}
 			location.cgi_extension = tokens[1];
+		}
+		else if (directive == "client_max_body_size")
+		{
+			/*
+				client_max_body_size directive in location block
+				Overrides the server-level setting for this specific location
+				Example: client_max_body_size 100M;
+			*/
+			if (tokens.size() < 2)
+			{
+				throw ConfigException("client_max_body_size directive requires a value");
+			}
+			location.client_max_body_size = parseSize(tokens[1]);
 		}
 		else if (directive == "return")
 		{

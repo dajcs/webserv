@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:13 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/19 16:01:02 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/07 17:25:40 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -63,6 +63,9 @@ class Request
 		bool hasError() const;
 		int getErrorCode() const;  // HTTP error code (400, 413, etc.)
 
+		// Set the maximum allowed body size (from config)
+		void setMaxBodySize(size_t maxSize);
+
 		// Body size for limit checking
 		size_t getContentLength() const;
 		size_t getBodySize() const;
@@ -84,6 +87,7 @@ class Request
 		ParseState _state;
 		int _errorCode;
 		std::string _buffer;
+		size_t _maxBodySize;  // <- set from config
 		size_t _contentLength;
 		size_t _bodyBytesRead;
 		size_t _expectedChunkSize;  // 0 = reading size line, >0 = reading chunk data
