@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:52 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/07 23:09:13 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/08 16:28:31 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1575,8 +1575,8 @@ void Server::stop()
 
 	// Close all client connections first
 	std::vector<int> clientFds;
-	for (std::map<int, ClientInfo>::iterator it = _clients.begin();
-			it != _clients.end(); ++it)
+	for (std::map<int, Connection>::iterator it = _connections.begin();
+			it != _connections.end(); ++it)
 	{
 		clientFds.push_back(it->first);
 	}
@@ -1640,5 +1640,5 @@ int Server::getEpollFd() const
 
 size_t Server::getClientCount() const
 {
-	return _clients.size();
+	return _connections.size();
 }

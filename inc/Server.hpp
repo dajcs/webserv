@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:30 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/05 13:16:30 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/08 16:29:05 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -385,7 +385,7 @@ private:
 
 	// Epoll-specific members
 	int							_epollFd;		// Epoll instance FD
-	std::map<int, ClientInfo>	_clients;		// Active client connections
+	// std::map<int, ClientInfo>	_clients;		// Active client connections
 	std::map<int, Connection>	_connections; 	// Client connections
 	std::set<int>				_listenFds;		// Set of listening FDs (for quick lookup)
 
