@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:30 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/07 23:09:13 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/09 14:36:53 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -153,6 +153,13 @@ private:
 	//  Error Responses
 	// ================================
 	Response errorResponse(int code, const ServerConfig* server = NULL);
+
+	// ================================
+	//  Session Management
+	// ================================
+	Response handleLogin(const Request& request);
+	Response handleDashboard(const Request& request);
+	Response handleLogout(const Request& request);
 
 	// ================================
 	//  Member Variables

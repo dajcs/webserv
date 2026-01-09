@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:39 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/19 08:50:30 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/09 14:30:32 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -1015,4 +1015,25 @@ std::string Response::getMimeTypeForFile(const std::string& filepath)
 
 	// Default for binary files
 	return "application/octet-stream";
+}
+
+
+
+// ======= Session Management ==============
+/*
+	We need to send the `Set-Cookie` header.
+
+	Technically HTTP allows multiple `Set-Cookie` headers,
+	but our `_headers` is a `std::map`, so this is limiting us to 1 cookie.
+	For this project sending one cookie (the session ID) is enough.
+	In production we would change `_headers` to `std::multimap`, or we would
+	handle specially the `Set-Cookie` in `build()`
+*/
+void Response::setCookie(const std::string& name, const std::string& value, int maxAge)
+{
+	std::stringstream ss;
+	// basic cookie format: name=value; Path=/; Max-Age=seconds
+	// HttpOnly: JavaScript cannot access this cookie (security)
+	ss << name << "=" << value << "; Path=/; HttpOnly; Max-Age=" << maxAge;
+	setHeader("Set-Cookie", ss.str());
 }

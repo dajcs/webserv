@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:13 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/07 23:09:13 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/09 13:42:49 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -77,6 +77,9 @@ class Request
 		// Client IP (set by Connectioin/Server for CGI use)
 		void setClientIP(const std::string& ip);
 		const std::string& getClientIP() const;
+
+		// getCookie - for session management
+		std::string getCookie(const std::string& name) const;
 
 	private:
 		std::string _method;

@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/07 13:52:18 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/09 15:42:10 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -14,6 +14,7 @@
 #include "Utils.hpp"
 #include "CGI.hpp"
 #include "Config.hpp"
+#include "Session.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -263,7 +264,27 @@ Response Router::route(const Request& request, int serverPort)
 		return handleCgi(request, resolvedPath, *location);
 	}
 
-	// Step 7: Dispatch to method handler
+	// Step 7: Session Management
+	/*
+		In a real config these would be specific location blocks
+		We are hardcoding specific paths here for the DEMO
+	*/
+	// std::string requestPath = request.getPath();
+	if (requestPath == "/login")
+	{
+		return handleLogin(request);
+	}
+	else if (requestPath == "/dashboard")
+	{
+		return handleDashboard(request);
+	}
+	else if (requestPath == "/logout")
+	{
+		return handleLogout(request);
+	}
+
+
+	// Step 8: Dispatch to method handler
 	/*
 		Each HTTP method has different semantics:
 			- GET: Retrieve a resource (read-only)
@@ -1882,4 +1903,120 @@ Response Router::errorResponse(int code, const ServerConfig* server)
 	}
 	// Default error page
 	return Response::error(code);
+}
+
+// ======================================
+//  Session Management Handlers
+// ======================================
+
+/*
+	handleLogin
+	-----------
+	1. If GET: Show a simple HTML form.
+	2. If POST: Check username/password
+		- if valid: Create sessioin, Set Cookie, Redirect to dashboard
+		- if invalid: show error
+*/
+Response Router::handleLogin(const Request& request)
+{
+	if (request.getMethod() == "GET")
+	{
+		std::string html =
+			"<html><body>"
+			"<h1>Login</h1>"
+			"<form method='POST' action='/login'>"
+			"User: <input type='text' name='user'><br>"
+			"<input type='submit' value='Login'>"
+			"</form>"
+			"</body></html>";
+		return Response::ok(html);
+	}
+	else if (request.getMethod() == "POST")
+	{
+		// Parse form data using Utils::parseFormUrlEncoded()
+		std::map<std::string, std::string> formData  = Utils::parseFormUrlEncoded(request.getBody());
+
+		// Simple hardcoded credential check
+		if (formData["user"] == "admin")
+		{
+			// 1. Create Session
+			std::string sessionId = SessionManager::getInstance().createSession();
+
+			// 2. Store data in Session
+			SessionManager::getInstance().setData(sessionId, "user", "admin");
+			SessionManager::getInstance().setData(sessionId, "role", "superuser");
+
+			// 3. Create Response
+			Response res = Response::redirect(302, "/dashboard");
+
+			// 4. Set the Cookie header
+			res.setCookie("webserv_session", sessionId);
+
+			return res;
+		}
+		else
+		{
+			return Response::error(403, "Invalid Credentials");
+		}
+	}
+	return Response::error(405); // Method Not Allowed
+}
+
+/*
+	handleDashboard
+	---------------
+	1. check if 'webserv_session' cookie exists
+	2. check if that session ID is valid in SessionManager
+	3. 	if yes: show protected content
+	4.	if no: redirect to /login
+*/
+Response Router::handleDashboard(const Request& request)
+{
+	// 1. Extract Cookie
+	std::string sessionId = request.getCookie("webserv_session");
+
+	// 2. Validate Session
+	if (sessionId.empty() || !SessionManager::getInstance().isValid(sessionId))
+	{
+		return Response::redirect(302, "/login");
+	}
+
+	// 3. Retrieve Data
+	std::string user = SessionManager::getInstance().getData(sessionId, "user");
+	std::string role = SessionManager::getInstance().getData(sessionId, "role");
+
+	// 4. Render Page
+	std::stringstream ss;
+	ss << "<html><body>";
+	ss << "<h1>Welcome, " << user << "!</h1>";
+	ss << "<p>Your role is: " << role << "</p>";
+	ss << "<p>Session ID: " << sessionId << "</p>";
+	ss << "<a href='/logout'>Logout</a>";
+	ss << "</body></html>";
+
+	return Response::ok(ss.str());
+}
+
+/*
+	handleLogout
+	------------
+	1. Get Session ID
+	2. Remove from SessionManager
+	3. Expire the cookie (Set-Cookie with Max-Age=0)
+	4. Redirect to login
+*/
+Response Router::handleLogout(const Request& request)
+{
+	std::string sessionId = request.getCookie("webserv_session");
+
+	if (!sessionId.empty())
+	{
+		SessionManager::getInstance().killSession(sessionId);
+	}
+
+	Response res = Response::redirect(302, "/login");
+	// Overwrite cookie with immediate expiration
+	res.setCookie("webserv_session", "", 0);
+
+	return res;
 }

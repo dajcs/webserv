@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:21 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/19 08:44:25 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/09 14:18:09 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -119,11 +119,13 @@ class Response
 		static std::string getDefaultErrorPage(int code);
 		static std::string formatHttpDate(time_t timestamp);
 
-		// MIME type helpers
+		// ==== MIME type helpers ======
 		static std::string getMimeType(const std::string& extension);
 		static std::string getMimeTypeForFile(const std::string& filepath);
 		static bool isTextFile(const std::string& filepath);
 
+		// ====== Session Management =====
+		void setCookie(const std::string& name, const std::string& value, int maxAge = 3600);
 };
 
 #endif

@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:28 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/07 23:17:04 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/09 14:11:40 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -474,6 +474,63 @@ bool Request::parse(const std::string& data)
 	return (_state == PARSE_COMPLETE || _state == PARSE_ERROR);
 
 }
+
+
+// =====================================
+//			Session Management
+// =====================================
+
+/*
+	We need to extract the `Cookie` header sent by the browser.
+	The format is usually
+		`Cookie: session_id=abc; user=bob`
+*/
+std::string Request::getCookie(const std::string& name) const
+{
+	// 1. Get the raw Cookie header
+	std::string cookieHeader = getHeader("Cookie");
+	if (cookieHeader.empty())
+	{
+		return "";
+	}
+
+	// 2. Cookies are separated by "; "
+	size_t pos = 0;
+	while (pos < cookieHeader.length())
+	{
+		size_t end = cookieHeader.find(';', pos);
+		if (end == std::string::npos)
+		{
+			end = cookieHeader.length();
+		}
+
+		// Extract "key=value" string
+		std::string pair = cookieHeader.substr(pos, end - pos);
+
+		// Trim leading spaces
+		size_t startName = pair.find_first_not_of(" \t");
+		if (startName != std::string::npos)
+		{
+			pair = pair.substr(startName);
+		}
+
+		// Find the equals sign
+		size_t eqPos = pair.find('=');
+		if (eqPos != std::string::npos)
+		{
+			std::string key = pair.substr(0, eqPos);
+			if (key == name)
+			{
+				return pair.substr(eqPos + 1);
+			}
+		}
+
+		pos = end + 1;
+	}
+
+	return "";
+}
+
 
 
 // ===============================================

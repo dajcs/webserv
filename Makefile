@@ -6,7 +6,7 @@
 #    By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2025/10/21 19:46:34 by anemet            #+#    #+#              #
-#    Updated: 2026/01/05 13:14:15 by anemet           ###   ########.fr        #
+#    Updated: 2026/01/09 15:47:36 by anemet           ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -46,6 +46,7 @@ SRCS = main.cpp \
         Response.cpp \
         Router.cpp \
         Server.cpp \
+        Session.cpp \
         Utils.cpp
 
 
