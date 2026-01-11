@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/09 15:42:10 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/11 21:30:00 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -539,7 +539,7 @@ std::string Router::resolvePath(const std::string& requestPath,
 
 	// Combine root + remainder
 	// ./YoupiBanane + /Yeah/file.txt = ./YoupiBanane/Yeah/file.txt
-	std::string fullPath = root + remainder;
+	std::string fullPath = root + locationPath + remainder;
 
 	#if DEBUG >= 1
 	std::cerr << "  [resolvePath] location: " << location.path
