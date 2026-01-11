@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:52 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/08 16:28:31 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/11 12:41:13 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -915,9 +915,7 @@ int Server::acceptNewConnection(int listenFd)
 /*
 	handleClientEvent() - Process events on a client socket
 
-	This is where we handle actual client communication.
-	For Step 2.2, we implement a simple echo/demo.
-	Full HTTP handling comes in later steps.
+	Handling actual client communication.
 
 	Parameters:
 		clientFd: The client socket with events
