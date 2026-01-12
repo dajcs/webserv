@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2025/12/18 13:56:03 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/12 19:21:53 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -29,7 +29,7 @@ curl -v http://localhost:8080/index.html
 curl -v http://localhost:8080/nonexistent.html
 
 # Test CGI (Python script)
-curl -v http://localhost:8080/cgi-bin/hello.py
+curl -v http://localhost:8080/cgi-bin/py/hello.py
 
 # Test file upload (POST)
 curl -v -F "file=@Makefile" http://localhost:8080/uploads
@@ -41,7 +41,7 @@ curl -v -X DELETE http://localhost:8080/uploads/Makefile
 curl -v http://localhost:8080/old-page
 
 # Test virtual host at example.com
-curl -v --resolve example.com:8080:127.0.0.1 http://example.com:8080/
+curl -v --resolve marigold.hotel:8080:127.0.0.1 http://marigold.hotel:8080/
 
 # Create large (50MB) file
 dd if=/dev/zero of=www/large.bin bs=1M count=50
@@ -49,13 +49,16 @@ dd if=/dev/zero of=www/large.bin bs=1M count=50
 curl -v --limit-rate 1M http://localhost:8080/large.bin > /dev/null
 
 # Test keep-alive
-# in curl -v output: * Re-using existing connection! (#0)
+# in curl -v output:
+#   * Re-using existing connection! (#0) with host localhost
 curl -v http://localhost:8080/ http://localhost:8080/index.html
 
 # run slow_client
 .test/slow_client.py
 # concurrently in another terminal run
 curl -v http://localhost:8080
+
+rm www/large.bin
 
 */
 

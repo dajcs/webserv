@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/12 12:56:14 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/12 23:13:31 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -293,15 +293,15 @@ Response Router::route(const Request& request, int serverPort)
 	*/
 	if (method == "GET" || method == "HEAD")
 	{
-		return handleGet(request, *location);
+		return handleGet(request, *location, server);
 	}
 	else if (method == "POST")
 	{
-		return handlePost(request, *location);
+		return handlePost(request, *location, server);
 	}
 	else if (method == "DELETE")
 	{
-		return handleDelete(request, *location);
+		return handleDelete(request, *location, server);
 	}
 
 	// Method not implemented (shouldn't reach here if Request validates methods)
@@ -613,7 +613,8 @@ bool Router::isCgiRequest(const std::string& path, const LocationConfig& locatio
 		request:	The HTTP request
 		location:	The matching location config
 */
-Response Router::handleGet(const Request& request, const LocationConfig& location)
+Response Router::handleGet(const Request& request, const LocationConfig& location,
+							const ServerConfig* server)
 {
 	std::string path = resolvePath(request.getPath(), location);
 
@@ -622,7 +623,7 @@ Response Router::handleGet(const Request& request, const LocationConfig& locatio
 	if (stat(path.c_str(), &pathStat) != 0)
 	{
 		// Can't access path
-		return errorResponse (404);
+		return errorResponse (404, server);
 	}
 
 	Response response;
@@ -630,7 +631,7 @@ Response Router::handleGet(const Request& request, const LocationConfig& locatio
 	// Check if it's a directory
 	if (S_ISDIR(pathStat.st_mode))
 	{
-		response = serveDirectory(path, location);
+		response = serveDirectory(path, location, server);
 	}
 	else
 	{
@@ -740,7 +741,8 @@ Response Router::handleGet(const Request& request, const LocationConfig& locatio
 	Returns:
 		Response indicating success (201 Created) or error
 */
-Response Router::handlePost(const Request& request, const LocationConfig& location)
+Response Router::handlePost(const Request& request, const LocationConfig& location,
+								const ServerConfig* server)
 {
 	// Step 1: Check if location has upload directory configured
 	if (location.upload_path.empty())
@@ -757,7 +759,7 @@ Response Router::handlePost(const Request& request, const LocationConfig& locati
 		if (!Utils::createDirectory(location.upload_path))
 		{
 			// Failed to create - server configuration error
-			return errorResponse(500);
+			return errorResponse(500, server);
 		}
 	}
 
@@ -1106,7 +1108,8 @@ Response Router::handlePost(const Request& request, const LocationConfig& locati
 	Returns:
 		204 No Content on success, or error response
 */
-Response Router::handleDelete(const Request& request, const LocationConfig& location)
+Response Router::handleDelete(const Request& request, const LocationConfig& location,
+								const ServerConfig* server)
 {
 	// Convert the URI (e.g., "/uploads/file.txt") to an absolute
 	// filesystem path (e.g., "/var/www/uploads/file.txt").
@@ -1116,7 +1119,7 @@ Response Router::handleDelete(const Request& request, const LocationConfig& loca
 	struct stat pathStat;
 	if (stat(path.c_str(), &pathStat) != 0)
 	{
-		return errorResponse(404); // Not Found
+		return errorResponse(404, server); // Not Found
 	}
 
 	// Don't allow deleting directories
@@ -1235,7 +1238,8 @@ Response Router::serveFile(const std::string& filepath)
 		- 200 OK + directory listing HTML (if autoindex enabled)
 		- 403 Forbidden (if no index and autoindex disabled)
 */
-Response Router::serveDirectory(const std::string& dirpath, const LocationConfig& location)
+Response Router::serveDirectory(const std::string& dirpath, const LocationConfig& location,
+								const ServerConfig* server)
 {
 	/*
 		Step 1: Try to serve index file
@@ -1280,7 +1284,7 @@ Response Router::serveDirectory(const std::string& dirpath, const LocationConfig
 	if (!location.autoindex)
 	{
 		// Autoindex disabled - don't reveal directory contents
-		return errorResponse(404);  // changed from 403 Forbidden to 404 Not Found
+		return errorResponse(404, server);  // changed from 403 Forbidden to 404 Not Found
 	}
 
 	/*
@@ -1882,21 +1886,30 @@ Response Router::errorResponse(int code, const ServerConfig* server)
 		if (it != server->error_pages.end())
 		{
 			// Custom error page configured
-			std::string errorPagePath = it->second;
+			std::string errorPageUri = it->second;
 
-			// Try to serve the custom error page
-			std::ifstream file(errorPagePath.c_str());
-			if (file)
+			// Find location that handles this error page URI
+			const LocationConfig* location = findLocation(*server, errorPageUri, "GET");
+			if (location)
 			{
-				std::stringstream contents;
-				contents << file.rdbuf();
-				file.close();
+				// Resolve URI to filesystem path
+				std::string errorPagePath = resolvePath(errorPageUri, *location);
 
-				Response response;
-				response.setStatus(code);
-				response.setContentType("text/html");
-				response.setBody(contents.str());
-				return response;
+				// Try to serve the custom error page
+				std::ifstream file(errorPagePath.c_str());
+				if (file)
+				{
+					std::stringstream contents;
+					contents << file.rdbuf();
+					file.close();
+
+					Response response;
+					response.setStatus(code);
+					response.setContentType("text/html");
+					response.setBody(contents.str());
+					response.addStandardHeaders();
+					return response;
+				}
 			}
 		}
 	}

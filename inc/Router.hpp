@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:30 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/09 14:36:53 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/12 22:15:18 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -111,9 +111,12 @@ private:
 	// ================================
 	//  Request Handlers
 	// ================================
-	Response handleGet(const Request& request, const LocationConfig& location);
-	Response handlePost(const Request& request, const LocationConfig& location);
-	Response handleDelete(const Request& request, const LocationConfig& location);
+	Response handleGet(const Request& request, const LocationConfig& location,
+						const ServerConfig* server);
+	Response handlePost(const Request& request, const LocationConfig& location,
+							const ServerConfig* server);
+	Response handleDelete(const Request& request, const LocationConfig& location,
+						const ServerConfig* server);
 	Response handleCgi(const Request& request, const std::string& scriptPath,
 						const LocationConfig& location);
 
@@ -121,7 +124,8 @@ private:
 	//  File/Directory Serving
 	// ================================
 	Response serveFile(const std::string& filepath);
-	Response serveDirectory(const std::string& dirpath, const LocationConfig& location);
+	Response serveDirectory(const std::string& dirpath, const LocationConfig& location,
+						const ServerConfig* server);
 
 	// ================================
 	//  Directory Listing Helpers (Step 9.2)
