@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/12 19:21:53 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/12 23:54:09 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -33,6 +33,10 @@ curl -v http://localhost:8080/cgi-bin/py/hello.py
 
 # Test file upload (POST)
 curl -v -F "file=@Makefile" http://localhost:8080/uploads
+
+# Test chunked file upload (POST)
+curl -v -H "Transfer-Encoding: chunked" -F "file=@Makefile" http://localhost:8080/uploads
+
 
 # Test DELETE (if configured)
 curl -v -X DELETE http://localhost:8080/uploads/Makefile
