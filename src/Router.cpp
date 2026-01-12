@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:59 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/11 21:30:00 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/12 12:56:14 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -463,8 +463,7 @@ const LocationConfig* Router::findLocation(const ServerConfig& server,
 		Root: ./YoupiBanane
 		Request: /directory/Yeah/file.txt
 
-		We strip "/directory" from the request, leaving "/Yeah/file.txt"
-		Then append to root: "./YoupiBanane/Yeah/file.txt"
+		We append request path to root: "./YoupiBanane/directory/Yeah/file.txt"
 
 	Input: request path (URI), location config
 	Return: filesystem path
