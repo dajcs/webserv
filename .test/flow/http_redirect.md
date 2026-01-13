@@ -1,8 +1,11 @@
 # Signal Flow: HTTP Redirect (301 Moved Permanently)
 
-Here's the complete signal flow when requesting `curl -v http://localhost:8080/old-page`:
+The complete signal flow when requesting:
 
-```
+`curl -v http://localhost:8080/old-page`
+
+
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    CONNECTION & REQUEST READING                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -39,7 +42,7 @@ curl sends:
 GET /old-page HTTP/1.1
 Host: localhost:8080
 User-Agent: curl/7.68.0
-Accept: */*
+Accept: * / *
 
 ────────────────────────────────────────────────────────────────
     │
@@ -57,7 +60,7 @@ _request->parse(_readBuffer)
     ├──► Parse headers:
     │        _headers["host"] = "localhost:8080"
     │        _headers["user-agent"] = "curl/7.68.0"
-    │        _headers["accept"] = "*/*"
+    │        _headers["accept"] = "* / *"
     │
     ├──► Empty line found → end of headers
     │
@@ -184,7 +187,7 @@ Response::redirect(code=301, location="/new-page")
     │             │     → For command-line tools like curl              │
     │             │                                                     │
     │             │  3. Human-readable message                          │
-    │             │     → Explains what's happening                     │
+    │             │     → Explains what is happening                     │
     │             └─────────────────────────────────────────────────────┘
     │
     ├──► response.setBody(body)
@@ -302,7 +305,7 @@ $ curl -v http://localhost:8080/old-page
 > GET /old-page HTTP/1.1
 > Host: localhost:8080
 > User-Agent: curl/7.68.0
-> Accept: */*
+> Accept: * / *
 >
 * Mark bundle as not supporting multiuse
 < HTTP/1.1 301 Moved Permanently
@@ -338,7 +341,7 @@ $ curl -v -L http://localhost:8080/old-page
 > GET /old-page HTTP/1.1
 > Host: localhost:8080
 > User-Agent: curl/7.68.0
-> Accept: */*
+> Accept: * / *
 >
 * Mark bundle as not supporting multiuse
 < HTTP/1.1 301 Moved Permanently
@@ -356,16 +359,17 @@ $ curl -v -L http://localhost:8080/old-page
 > GET /new-page HTTP/1.1
 > Host: localhost:8080
 > User-Agent: curl/7.68.0
-> Accept: */*
+> Accept: * / *
 >
 < HTTP/1.1 404 Not Found           ← /new-page doesn't exist in this example
 < Content-Type: text/html
 < ...
 ```
 
+
 ## Redirect Flow Visualization
 
-```
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    REDIRECT PROCESS DIAGRAM                                 │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -399,9 +403,10 @@ Browser/Client                          webserv                     Config
      │                                     │                           │
 ```
 
+
 ## Key Routing Decision Point
 
-```
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    ROUTING DECISION: REDIRECT CHECK                         │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -427,7 +432,7 @@ Router::route(request, serverPort)
     │    │                                                                 │
     │    │  This means:                                                    │
     │    │  - Method is NOT checked (redirect works for any method)        │
-    │    │  - File existence is NOT checked (redirect doesn't need files)  │
+    │    │  - File existence is NOT checked (redirect does not need files) │
     │    │  - CGI is NOT checked (redirect bypasses CGI)                   │
     │    │  - Redirects are the FIRST thing checked after finding location │
     │    └─────────────────────────────────────────────────────────────────┘
@@ -447,6 +452,7 @@ Router::route(request, serverPort)
               ├──► handlePost()       ← NOT called
               └──► handleDelete()     ← NOT called
 ```
+
 
 ## Summary: System Calls for Redirect Request
 

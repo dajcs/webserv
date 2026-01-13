@@ -1,8 +1,11 @@
 # Signal Flow: HTTP Request Processing
 
-Here's the complete signal flow when a client sends `curl -v http://localhost:8080/`:
+The complete signal flow when a client sends:
 
-```
+`curl -v http://localhost:8080/`
+
+
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         CLIENT CONNECTION PHASE                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -221,7 +224,7 @@ processRequest(conn)
                   │        │        ├──► location "/files":
                   │        │        │        "/" does not start with "/files"
                   │        │        │
-                  │        │        └──► ... (other locations don't match)
+                  │        │        └──► ... (other locations .. no match)
                   │        │
                   │        └──► Returns: &LocationConfig{path="/", root="www",
                   │                                      index="index.html",
@@ -457,6 +460,7 @@ epoll_wait(4, events, 64, 1000)
          │
          └──► Loop continues, waiting for next connection...
 ```
+
 
 ## Summary: System Calls in Order
 

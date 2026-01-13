@@ -1,8 +1,16 @@
 # Signal Flow: Chunked File Upload
 
-Here's how the signal flow differs when using chunked transfer encoding with `curl -v -H "Transfer-Encoding: chunked" -F "file=@Makefile" http://localhost:8080/uploads`:
+How the signal flow differs when using known length vs chunked transfer encoding for file uploads.
 
-```
+
+`curl -v -F "file=@Makefile" http://localhost:8080/uploads`
+
+vs
+
+`curl -v -H "Transfer-Encoding: chunked" -F "file=@Makefile" http://localhost:8080/uploads`
+
+
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    KEY DIFFERENCE: NO CONTENT-LENGTH                        │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -56,7 +64,7 @@ b5\r\n                                            ← Chunk 3: hex size (181 byt
 
 ## Detailed Signal Flow Differences
 
-```
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    REQUEST PARSING - HEADER PHASE                           │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -250,7 +258,7 @@ parse() → Completes chunk 2
 
 ## Comparison: Content-Length vs Chunked Parsing
 
-```
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    CONTENT-LENGTH BODY PARSING                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -313,7 +321,7 @@ _state = PARSE_BODY_CHUNKED
 
 ## Summary: Key Differences
 
-```
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    SIDE-BY-SIDE COMPARISON                                  │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -375,6 +383,7 @@ b5                           ← hex(181)
                              ← \r\n (end)
 ═══════════════════════════════════════════
 ```
+
 
 ## System Calls Comparison
 

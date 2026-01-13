@@ -1,8 +1,11 @@
 # Signal Flow: DELETE Request
 
-Here's the complete signal flow when deleting a file with `curl -v -X DELETE http://localhost:8080/uploads/Makefile`:
+The complete signal flow when deleting a file with:
 
-```
+`curl -v -X DELETE http://localhost:8080/uploads/Makefile`
+
+
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    CONNECTION & REQUEST READING                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -39,7 +42,7 @@ curl sends:
 DELETE /uploads/Makefile HTTP/1.1
 Host: localhost:8080
 User-Agent: curl/7.68.0
-Accept: */*
+Accept: * / *
 
 ────────────────────────────────────────────────────────────────
     │
@@ -195,12 +198,12 @@ handleDelete(request, location, server)
     │             pathStat.st_size = 1500  (file size in bytes)
     │
     │  ┌─────────────────────────────────────────────────────────────────┐
-    │  │   Step 3: Verify it's NOT a directory                           │
+    │  │   Step 3: Verify it is NOT a directory                           │
     │  └─────────────────────────────────────────────────────────────────┘
     │
     ├──► S_ISDIR(pathStat.st_mode)
     │        │
-    │        └──► false ✓ (it's a regular file, not a directory)
+    │        └──► false ✓ (it is a regular file, not a directory)
     │
     │  ┌─────────────────────────────────────────────────────────────────┐
     │  │   Step 4: Delete the file                                       │
@@ -361,7 +364,7 @@ $ curl -v -X DELETE http://localhost:8080/uploads/Makefile
 > DELETE /uploads/Makefile HTTP/1.1
 > Host: localhost:8080
 > User-Agent: curl/7.68.0
-> Accept: */*
+> Accept: * / *
 >
 * Mark bundle as not supporting multiuse
 < HTTP/1.1 204 No Content
@@ -374,7 +377,7 @@ $ curl -v -X DELETE http://localhost:8080/uploads/Makefile
 
 ## Error Cases
 
-```
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    ERROR CASE 1: File Not Found (404)                       │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -386,7 +389,7 @@ handleDelete(request, location, server)
     │
     ├──► stat("www/uploads/Makefile", &pathStat)
     │        │
-    │        └──► Returns: -1 (file doesn't exist!)
+    │        └──► Returns: -1 (file does not exist!)
     │             errno = ENOENT (No such file or directory)
     │
     └──► return errorResponse(404, server)
@@ -413,7 +416,7 @@ handleDelete(request, location, server)
     ├──► stat("www/uploads", &pathStat)
     │        │
     │        └──► Returns: 0 (exists)
-    │             pathStat.st_mode = S_IFDIR | 0755  (it's a directory!)
+    │             pathStat.st_mode = S_IFDIR | 0755  (it is a directory!)
     │
     ├──► S_ISDIR(pathStat.st_mode)
     │        │
@@ -462,7 +465,7 @@ handleDelete(request, location, server)
 └─────────────────────────────────────────────────────────────────────────────┘
 
 Request: DELETE /files/document.txt HTTP/1.1
-(Location /files doesn't allow DELETE method)
+(Location /files does not allow DELETE method)
 
 router.route(request, serverPort=8080)
     │
@@ -488,7 +491,7 @@ router.route(request, serverPort=8080)
 
 ## Filesystem State Before/After DELETE
 
-```
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    FILESYSTEM STATE CHANGES                                 │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -531,7 +534,7 @@ $ ls -la www/uploads/
 -rw-r--r--  1 user user 50000 Jan 11 10:00 document.pdf
 
 Makefile is DELETED! ✓
-```
+```cpp
 
 ## Summary: System Calls for DELETE Request
 

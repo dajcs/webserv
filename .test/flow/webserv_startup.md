@@ -1,8 +1,11 @@
 # Signal Flow: webserv Startup and Wait for Requests
 
-Here's the complete signal flow from program start to waiting for connections:
+The complete signal flow from program start to waiting for connections:
 
-```
+`./webserv config/default.conf`
+
+
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              STARTUP PHASE                                  │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -151,7 +154,7 @@ Data Structures:
 │     {path="/", root="www", index="index.html", methods={GET,POST}},     │
 │     {path="/files", root="www", autoindex=true, methods={GET}},         │
 │     {path="/uploads", root="www", upload_path="www/uploads", ...},      │
-│     {path="/cgi-bin/py", cgi_extension=".py", cgi_path="/usr/bin/...}, │
+│     {path="/cgi-bin/py", cgi_extension=".py", cgi_path="/usr/bin/..."}, │
 │     ...                                                                 │
 │   ]                                                                     │
 │                                                                         │
@@ -188,6 +191,7 @@ Every 1 second (EPOLL_TIMEOUT_MS = 1000):
 
     └──► Loop back to epoll_wait()
 ```
+
 
 ## Summary of System Calls During Startup
 

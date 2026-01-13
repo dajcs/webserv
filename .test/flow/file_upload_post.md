@@ -1,8 +1,11 @@
 # Signal Flow: File Upload (multipart/form-data POST)
 
-Here's the complete signal flow when uploading a file with `curl -v -F "file=@Makefile" http://localhost:8080/uploads`:
+The complete signal flow when uploading a file with:
 
-```
+`curl -v -F "file=@Makefile" http://localhost:8080/uploads`
+
+
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    CONNECTION & INITIAL READ                                │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -26,7 +29,7 @@ curl sends multipart POST request:
 POST /uploads HTTP/1.1
 Host: localhost:8080
 User-Agent: curl/7.68.0
-Accept: */*
+Accept: * / *
 Content-Length: 1847
 Content-Type: multipart/form-data; boundary=------------------------abc123xyz
 
@@ -90,7 +93,7 @@ _request->parse(_readBuffer)
     ├──► Parse headers:
     │        _headers["host"] = "localhost:8080"
     │        _headers["user-agent"] = "curl/7.68.0"
-    │        _headers["accept"] = "*/*"
+    │        _headers["accept"] = "* / *"
     │        _headers["content-length"] = "1847"
     │        _headers["content-type"] = "multipart/form-data; boundary=------------------------abc123xyz"
     │
@@ -317,7 +320,7 @@ handlePost(request, location, server)
     │
     ├──► For each part in parts:
     │        │
-    │        ├──► part.filename = "Makefile" (not empty) → It's a file!
+    │        ├──► part.filename = "Makefile" (not empty) → It is a file!
     │        │
     │        ├──► Utils::sanitizeFilename("Makefile")
     │        │        │
@@ -446,7 +449,7 @@ $ curl -v -F "file=@Makefile" http://localhost:8080/uploads
 > POST /uploads HTTP/1.1
 > Host: localhost:8080
 > User-Agent: curl/7.68.0
-> Accept: */*
+> Accept: * / *
 > Content-Length: 1847
 > Content-Type: multipart/form-data; boundary=------------------------abc123xyz
 >
@@ -485,7 +488,7 @@ www/
 
 ## Multipart Parsing Detail
 
-```
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │               MULTIPART/FORM-DATA STRUCTURE                                 │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -526,6 +529,7 @@ Parsing algorithm:
 4. Handle final boundary:
    Final boundary ends with "--" suffix: "--------------------------abc123xyz--"
 ```
+
 
 ## Summary: System Calls for File Upload
 

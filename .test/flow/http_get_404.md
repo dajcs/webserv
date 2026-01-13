@@ -1,8 +1,11 @@
 # Signal Flow: 404 Not Found Request
 
-Here's the complete signal flow when a client requests a non-existent file with `curl -v http://localhost:8080/nonexistent.html`:
+The complete signal flow when a client requests a non-existent file with:
 
-```
+`curl -v http://localhost:8080/nonexistent.html`
+
+
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         CLIENT CONNECTION PHASE                             │
 │                        (Same as successful request)                         │
@@ -182,13 +185,13 @@ processRequest(conn)
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │              ALTERNATIVE: NO CUSTOM ERROR PAGE CONFIGURED                   │
-│         (If www/errors/404.html doesn't exist or isn't configured)          │
+│       (If www/errors/404.html does not exist or is not configured)          │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 errorResponse(404, server)
     │
     ├──► server->error_pages.find(404)
-    │        └──► Not found OR file doesn't exist
+    │        └──► Not found OR file does not exist
     │
     └──► return Response::error(404)
              │
@@ -380,7 +383,7 @@ $ curl -v http://localhost:8080/nonexistent.html
 
 The critical difference happens at the `stat()` system call:
 
-```
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    COMPARISON: 200 OK vs 404 NOT FOUND                      │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -405,6 +408,7 @@ Action:             serveDirectory()                  errorResponse(404)
 Response:           HTTP/1.1 200 OK                   HTTP/1.1 404 Not Found
                     + index.html content              + error page HTML
 ```
+
 
 ## Summary: System Calls for 404 Request
 

@@ -1,8 +1,11 @@
 # Signal Flow: Virtual Host Request
 
-Here's the complete signal flow when requesting `curl -v --resolve marigold.hotel:8080:127.0.0.1 http://marigold.hotel:8080/`:
+The complete signal flow when requesting:
 
-```
+`curl -v --resolve marigold.hotel:8080:127.0.0.1 http://marigold.hotel:8080/`
+
+
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    CURL --resolve EXPLANATION                               │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -72,7 +75,7 @@ curl sends:
 GET / HTTP/1.1
 Host: marigold.hotel:8080      ← KEY HEADER! Virtual host identification
 User-Agent: curl/7.68.0
-Accept: */*
+Accept: */ *
 
 ════════════════════════════════════════════════════════════════════════════════
     │
@@ -98,7 +101,7 @@ _request->parse(_readBuffer)
     ├──► Parse headers:
     │        _headers["host"] = "marigold.hotel:8080"    ← VIRTUAL HOST KEY!
     │        _headers["user-agent"] = "curl/7.68.0"
-    │        _headers["accept"] = "*/*"
+    │        _headers["accept"] = "*/ *"
     │
     ├──► Empty line found → end of headers
     │
@@ -256,7 +259,7 @@ handleGet(request, location, server)
     ├──► stat("www/marigold/", &pathStat)
     │        │
     │        └──► Returns: 0 (success)
-    │             pathStat.st_mode = S_IFDIR | 0755  (it's a directory)
+    │             pathStat.st_mode = S_IFDIR | 0755  (it is a directory)
     │
     ├──► S_ISDIR(pathStat.st_mode) → true
     │
@@ -403,7 +406,7 @@ $ curl -v --resolve marigold.hotel:8080:127.0.0.1 http://marigold.hotel:8080/
 > GET / HTTP/1.1
 > Host: marigold.hotel:8080
 > User-Agent: curl/7.68.0
-> Accept: */*
+> Accept: */ *
 >
 * Mark bundle as not supporting multiuse
 < HTTP/1.1 200 OK
@@ -426,7 +429,7 @@ $ curl -v --resolve marigold.hotel:8080:127.0.0.1 http://marigold.hotel:8080/
 
 ## Virtual Host Selection Visualization
 
-```
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    VIRTUAL HOST ROUTING DECISION TREE                       │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -474,9 +477,10 @@ www/                              ← Root for "localhost" server
     └── index.html                ← Served for curl http://marigold.hotel:8080/
 ```
 
+
 ## Configuration Reference
 
-```
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    RELEVANT CONFIG SECTIONS                                 │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -507,9 +511,10 @@ server {
 }
 ```
 
+
 ## Key Difference: Virtual Host vs Regular Request
 
-```
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    COMPARISON: localhost vs marigold.hotel                  │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -537,6 +542,7 @@ The server uses this header to select which server block handles the request.
 This is how one server can host multiple websites on the same port!
 ```
 
+
 ## Summary: System Calls for Virtual Host Request
 
 | Phase | System Call | Parameters | Returns |
@@ -558,4 +564,4 @@ This is how one server can host multiple websites on the same port!
 | | `send` | `(5, response, ~400, MSG_NOSIGNAL)` | ~400 |
 | | `epoll_ctl` | `(4, MOD, 5, EPOLLIN)` | 0 |
 
-The key insight is that **virtual hosting happens entirely in application logic** — the TCP connection is identical regardless of which virtual host is requested. The Host header in the HTTP request is the only differentiator.
+The key insight is that **virtual hosting happens entirely in application logic** -- the TCP connection is identical regardless of which virtual host is requested. The Host header in the HTTP request is the only differentiator.

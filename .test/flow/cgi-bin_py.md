@@ -1,8 +1,11 @@
 # Signal Flow: CGI Request Processing
 
-Here's the complete signal flow when a client requests `curl -v http://localhost:8080/cgi-bin/py/hello.py`:
+The complete signal flow when a client requests:
 
-```
+`curl -v http://localhost:8080/cgi-bin/py/hello.py`
+
+
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    CONNECTION & REQUEST READING                             │
 │                     (Same as static file request)                           │
@@ -96,7 +99,7 @@ Router::route(request, serverPort=8080)
     │                 ├──► location.cgi_extension = ".py"
     │                 ├──► path.compare(pathLen - 3, 3, ".py") == 0 ✓
     │                 │
-    │                 └──► Returns: true  ← IT'S A CGI REQUEST!
+    │                 └──► Returns: true  ← IT IS A CGI REQUEST!
     │
     └──► handleCgi(request, "www/cgi-bin/py/hello.py", location)
 
@@ -290,7 +293,7 @@ cgi.execute(timeout=30)
              │
              │   ┌─────────────────────────────────────────────────────────┐
              │   │    PYTHON3 EXECUTES hello.py                            │
-             │   │                                                          │
+             │   │                                                         │
              │   │    Script reads environment variables, generates output │
              │   │    and writes to stdout (which is the pipe)             │
              │   └─────────────────────────────────────────────────────────┘
@@ -507,7 +510,7 @@ $ curl -v http://localhost:8080/cgi-bin/py/hello.py
 > GET /cgi-bin/py/hello.py HTTP/1.1
 > Host: localhost:8080
 > User-Agent: curl/7.68.0
-> Accept: */*
+> Accept: * / *
 >
 * Mark bundle as not supporting multiuse
 < HTTP/1.1 200 OK
@@ -525,7 +528,7 @@ $ curl -v http://localhost:8080/cgi-bin/py/hello.py
 
 ## File Descriptor Summary During CGI Execution
 
-```
+```cpp
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    FILE DESCRIPTORS TIMELINE                                │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -569,7 +572,7 @@ PARENT PROCESS (during CGI execution):
 │   7    │ stdin_pipe[1] → write POST body to CGI  │
 │   8    │ stdout_pipe[0] ← read output from CGI   │
 └────────┴─────────────────────────────────────────┘
-(FDs 6 and 9 closed - child's ends of pipes)
+(FDs 6 and 9 closed - the child end of pipes)
 
 AFTER CGI EXECUTION (cleanup):
 ┌────────┬─────────────────────────────────────────┐
@@ -584,6 +587,7 @@ AFTER CGI EXECUTION (cleanup):
 └────────┴─────────────────────────────────────────┘
 (All pipe FDs closed, child process reaped)
 ```
+
 
 ## Summary: System Calls for CGI Request
 
