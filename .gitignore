@@ -1,5 +1,3 @@
-Makefile
-src/main_*.cpp
 webserv
 *.o
 */*.o
