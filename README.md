@@ -2,5 +2,5 @@
 
 1. [Project Description](.test/project_description.md)
 2. [Implementation Workflow](.test/implementation_workflow.md)
-3. [Webserv Signal Flows](.test/webserv_signal_flows.md)
+3. [Webserv Signal Flows](.test/flow/webserv_signal_flows.md)
 

@@ -3,7 +3,7 @@
 
 A 42 school project:
   - [original subject pdf](./webserv.pdf)
-  - [original subject markdown](./.test/webserv.md)
+  - [original subject markdown](./webserv.md)
 
 
 Build a **minimal HTTP/1.1 web server** in **C++98**, using **non-blocking I/O** with a **single** `poll`/`select`/`epoll` loop, able to:
