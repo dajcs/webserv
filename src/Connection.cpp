@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   Connection.cpp                                     :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
+/*   By: hhuber <hhuber@student.42.fr>              +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:55:16 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/08 00:37:50 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/13 13:56:53 by hhuber           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -969,11 +969,11 @@ bool Connection::shouldKeepAlive() const
 	return _keepAlive;
 }
 
-void Connection::setMaxBodySize(size_t maxSize)
+void Connection::setMaxBodySize(size_t maxSize, bool propagateToRequest)
 {
 	_maxBodySize = maxSize;
-	// Also update the current request if it exists
-	if (_request)
+	// Optionally update the current request if requested by caller
+	if (propagateToRequest && _request)
 	{
 		_request->setMaxBodySize(maxSize);
 	}

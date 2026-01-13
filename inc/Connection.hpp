@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:57:03 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/07 23:09:13 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/13 14:35:10 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -406,7 +406,7 @@ bool handleWriteComplete();
 		server-level body size limit. This is propagated to the
 		Request object for parsing validation.
 	*/
-	void setMaxBodySize(size_t maxSize);
+	void setMaxBodySize(size_t maxSize, bool propagateToRequest = true);
 
 	/*
 		needsMaxBodySizeUpdate() - Check if max body size needs location-based update

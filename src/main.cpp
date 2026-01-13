@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/12 23:54:09 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/13 13:45:17 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -49,8 +49,16 @@ curl -v --resolve marigold.hotel:8080:127.0.0.1 http://marigold.hotel:8080/
 
 # Create large (50MB) file
 dd if=/dev/zero of=www/large.bin bs=1M count=50
+
 # Test large file serving
-curl -v --limit-rate 1M http://localhost:8080/large.bin > /dev/null
+curl -v --limit-rate 5M http://localhost:8080/large.bin > /dev/null
+
+# Test known-length file upload larger than 10M limit
+curl -v -F "file=@www/large.bin" http://localhost:8080/uploads
+
+# Test chunked file upload larger than 10M limit
+curl -v -H "Transfer-Encoding: chunked" -F "file=@www/large.bin" http://localhost:8080/uploads
+
 
 # Test keep-alive
 # in curl -v output:

@@ -3,10 +3,10 @@
 /*                                                        :::      ::::::::   */
 /*   Server.cpp                                         :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
+/*   By: hhuber <hhuber@student.42.fr>              +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:52 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/11 12:41:13 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/13 13:56:53 by hhuber           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -894,14 +894,17 @@ int Server::acceptNewConnection(int listenFd)
 	_connections[clientFd] = conn;
 
 	// Set max body size from server config for early request parsing validation
-	if (_config)
-	{
-		const ServerConfig* serverConf = _config->getServerByHostPort("0.0.0.0", serverPort);
-		if (serverConf)
+		if (_config)
 		{
-			_connections[clientFd].setMaxBodySize(serverConf->client_max_body_size);
+			const ServerConfig* serverConf = _config->getServerByHostPort("0.0.0.0", serverPort);
+			if (serverConf)
+			{
+				// Set the connection-level default max body size from server config,
+				// but do NOT propagate to the Request yet. The Request's checks
+				// should only be enabled after the location is matched (see below).
+				_connections[clientFd].setMaxBodySize(serverConf->client_max_body_size, false);
+			}
 		}
-	}
 
 	std::cout << "  New connection from " << conn.getClientIP()
 			  << ":" << conn.getClientPort()
