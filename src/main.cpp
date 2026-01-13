@@ -6,7 +6,7 @@
 /*   By: anemet <anemet@student.42luxembourg.lu>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2025/12/07 15:54:34 by anemet            #+#    #+#             */
-/*   Updated: 2026/01/13 13:45:17 by anemet           ###   ########.fr       */
+/*   Updated: 2026/01/13 14:56:48 by anemet           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -29,7 +29,13 @@ curl -v http://localhost:8080/index.html
 curl -v http://localhost:8080/nonexistent.html
 
 # Test CGI (Python script)
-curl -v http://localhost:8080/cgi-bin/py/hello.py
+curl -v http://localhost:8080/cgi-bin/py/hello.py\?foo=bar
+
+# Test CGI (Perl script)
+curl -v http://localhost:8080/cgi-bin/pl/hello.pl\?foo=bar
+
+# Test CGI (PHP script)
+curl -v http://localhost:8080/cgi-bin/php/hello.php\?foo=bar
 
 # Test file upload (POST)
 curl -v -F "file=@Makefile" http://localhost:8080/uploads
@@ -47,11 +53,11 @@ curl -v http://localhost:8080/old-page
 # Test virtual host at example.com
 curl -v --resolve marigold.hotel:8080:127.0.0.1 http://marigold.hotel:8080/
 
-# Create large (50MB) file
-dd if=/dev/zero of=www/large.bin bs=1M count=50
+# Create large (20MB) file
+dd if=/dev/zero of=www/large.bin bs=1M count=20
 
 # Test large file serving
-curl -v --limit-rate 5M http://localhost:8080/large.bin > /dev/null
+curl -v --limit-rate 2M http://localhost:8080/large.bin > /dev/null
 
 # Test known-length file upload larger than 10M limit
 curl -v -F "file=@www/large.bin" http://localhost:8080/uploads
