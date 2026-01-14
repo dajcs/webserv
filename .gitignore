@@ -2,6 +2,9 @@ webserv
 *.o
 */*.o
 www/uploads/*
+!www/uploads/.gitkeep
+www/files/*
+!www/files/.gitkeep
 www/large.bin
 */a.out
 a.out
